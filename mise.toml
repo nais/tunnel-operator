@@ -1,0 +1,58 @@
+[settings]
+pin = true
+
+[tools]
+go = "1.26.2"
+
+[tasks.build]
+description = "Build manager binary"
+run = "go build -o bin/manager cmd/main.go"
+
+[tasks.test]
+description = "Run tests"
+depends = ["generate"]
+run = """
+KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use 1.29.0 --bin-dir ./bin -p path)" \
+  go test $(go list ./... | grep -v /e2e) -coverprofile cover.out
+"""
+
+[tasks.fmt]
+description = "Format code"
+run = "go fmt ./..."
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.54.2 run"
+
+[tasks."generate"]
+description = "Generate manifests and deepcopy"
+depends = ["generate:manifests", "generate:deepcopy"]
+
+[tasks."generate:manifests"]
+description = "Generate CRD and RBAC manifests"
+run = "go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.14.0 rbac:roleName=manager-role crd webhook paths='./...' output:crd:artifacts:config=config/crd/bases"
+
+[tasks."generate:deepcopy"]
+description = "Generate DeepCopy methods"
+run = "go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.14.0 object:headerFile='hack/boilerplate.go.txt' paths='./...'"
+
+[tasks."docker:build"]
+description = "Build docker image"
+run = "docker build -t ${IMG:-tunnel-operator:latest} ."
+
+[tasks."docker:build-gateway"]
+description = "Build gateway docker image"
+run = "docker build -t ${GATEWAY_IMG:-tunnel-operator-gateway:latest} -f cmd/gateway/Dockerfile ."
+
+[tasks."crd:install"]
+description = "Install CRDs into cluster"
+run = "kubectl apply -f config/crd/bases/"
+
+[tasks.run]
+description = "Run controller locally"
+depends = ["generate"]
+run = "go run ./cmd/main.go"
