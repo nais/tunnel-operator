@@ -1,0 +1,20 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/nais/tunnel-operator
+  pullPolicy: IfNotPresent
+  tag: ""
+
+gatewayImage: ghcr.io/nais/tunnel-operator/gateway:latest
+
+serviceAccount:
+  create: true
+  name: tunnel-operator
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
