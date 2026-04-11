@@ -1,0 +1,32 @@
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+bin/
+testbin/
+gateway
+
+# Build artifacts
+*.out
+Dockerfile.cross
+
+# Go workspace
+go.work
+go.work.sum
+
+# Vendored generated files (keep)
+!vendor/**/zz_generated.*
+
+# Editor/IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
