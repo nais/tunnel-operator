@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -164,6 +165,12 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 			ServiceAccountName:    saName,
 			RestartPolicy:         corev1.RestartPolicyNever,
 			ActiveDeadlineSeconds: &deadlineSeconds,
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: new(true),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
 			Containers: []corev1.Container{{
 				Name:  "gateway",
 				Image: gatewayImage,
@@ -174,6 +181,16 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 					{Name: "STUN_SERVERS", Value: "stun.cloudflare.com:3478,stun.l.google.com:19302"},
 					{Name: "TUNNEL_NAME", Value: tunnel.Name},
 					{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
+				},
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: new(false),
+					RunAsNonRoot:             new(true),
+					SeccompProfile: &corev1.SeccompProfile{
+						Type: corev1.SeccompProfileTypeRuntimeDefault,
+					},
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{"ALL"},
+					},
 				},
 			}},
 		}

@@ -37,7 +37,7 @@ values:
     description: GCP service account email for Workload Identity
     computed:
       template: |
-        {{ .Env.tunnel_operator_serviceaccount_email | quote }}
+        {{ .Env.tunnel_operator_name | quote }}
 
   tenant.domain:
     displayName: Tenant domain

@@ -18,6 +18,8 @@ spec:
       serviceAccountName: {{ include "tunnel-operator.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: manager
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -62,6 +64,8 @@ spec:
           readOnlyRootFilesystem: true
           runAsNonRoot: true
           runAsUser: 65532
+          seccompProfile:
+            type: RuntimeDefault
           capabilities:
             drop:
             - ALL
