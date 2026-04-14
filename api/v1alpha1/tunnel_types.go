@@ -22,12 +22,12 @@ type TunnelTarget struct {
 }
 
 type TunnelSpec struct {
-	TeamSlug               string       `json:"teamSlug"`
-	Environment            string       `json:"environment"`
-	Target                 TunnelTarget `json:"target"`
-	ClientPublicKey        string       `json:"clientPublicKey"`
-	ClientSTUNEndpoint     string       `json:"clientSTUNEndpoint,omitempty"`
-	ActiveDeadlineSeconds  *int64       `json:"activeDeadlineSeconds,omitempty"`
+	TeamSlug              string       `json:"teamSlug"`
+	Environment           string       `json:"environment"`
+	Target                TunnelTarget `json:"target"`
+	ClientPublicKey       string       `json:"clientPublicKey"`
+	ClientSTUNEndpoint    string       `json:"clientSTUNEndpoint,omitempty"`
+	ActiveDeadlineSeconds *int64       `json:"activeDeadlineSeconds,omitempty"`
 }
 
 type TunnelStatus struct {
