@@ -14,7 +14,7 @@ run = "go build -o bin/manager cmd/main.go"
 description = "Run tests"
 depends = ["generate"]
 run = """
-KUBEBUILDER_ASSETS="$(setup-envtest use 1.29.0 --bin-dir ./bin -p path)" \
+	setup-envtest use 1.34.0 --bin-dir ./bin -p path
   go test $(go list ./... | grep -v /e2e) -coverprofile cover.out
 """
 

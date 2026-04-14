@@ -10,6 +10,8 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -72,8 +74,27 @@ var _ = Describe("Tunnel Controller", func() {
 			}
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Cleanup the specific resource instance Tunnel")
+			By("Removing finalizer and deleting the Tunnel resource")
+			if controllerutil.ContainsFinalizer(resource, finalizerName) {
+				controllerutil.RemoveFinalizer(resource, finalizerName)
+				Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+			}
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			By("Cleaning up gateway resources")
+			gwName := gatewayResourceName(resourceName)
+			gwKey := types.NamespacedName{Name: gwName, Namespace: namespace}
+			for _, obj := range []client.Object{
+				&corev1.Pod{},
+				&networkingv1.NetworkPolicy{},
+				&corev1.ServiceAccount{},
+				&rbacv1.Role{},
+				&rbacv1.RoleBinding{},
+			} {
+				if err := k8sClient.Get(ctx, gwKey, obj); err == nil {
+					_ = k8sClient.Delete(ctx, obj)
+				}
+			}
 		})
 		It("should create gateway resources and update status", func() {
 			By("Reconciling the created resource")

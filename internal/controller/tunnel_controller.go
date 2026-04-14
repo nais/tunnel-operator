@@ -49,6 +49,28 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	if tunnel.Status.Phase == v1alpha1.TunnelPhaseTerminated {
 		logger.Info("cleaning up terminated tunnel", "tunnel", req.NamespacedName)
+
+		resourceName := gatewayResourceName(tunnel.Name)
+		objects := []client.Object{
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
+			&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
+			&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
+			&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
+			&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
+		}
+		for _, obj := range objects {
+			if err := client.IgnoreNotFound(r.Delete(ctx, obj)); err != nil {
+				return ctrl.Result{}, fmt.Errorf("deleting %T: %w", obj, err)
+			}
+		}
+
+		if controllerutil.ContainsFinalizer(tunnel, finalizerName) {
+			controllerutil.RemoveFinalizer(tunnel, finalizerName)
+			if err := r.Update(ctx, tunnel); err != nil {
+				return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
+			}
+		}
+
 		if err := r.Delete(ctx, tunnel); err != nil {
 			return ctrl.Result{}, client.IgnoreNotFound(err)
 		}
