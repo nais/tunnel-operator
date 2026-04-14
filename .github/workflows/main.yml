@@ -157,7 +157,7 @@ jobs:
             helm push "$chart" oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature
           done
 
-  rollout_tenant:
+  rollout-tenant:
     name: Rollout tenant
     if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
     needs:
@@ -179,7 +179,7 @@ jobs:
           target: |
             {"kind": "tenant", "tenant": "dev-nais"}
 
-  rollout_operator:
+  rollout-operator:
     name: Rollout operator
     if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
     needs:
