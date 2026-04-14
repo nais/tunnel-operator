@@ -26,3 +26,7 @@ tenant:
 clusters: ""
 
 staticClusters: ""
+
+fasit:
+  tenant:
+    name: ""

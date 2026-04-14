@@ -33,7 +33,7 @@ func init() {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	tenantDomain := os.Getenv("TENANT_DOMAIN")
+	tenantName := os.Getenv("TENANT_NAME")
 	clusterNames := os.Getenv("CLUSTERS")
 	staticClustersRaw := os.Getenv("STATIC_CLUSTERS")
 
@@ -48,7 +48,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	clusterConfigs, err := provider.CreateClusterConfigMap(tenantDomain, clusters, staticClusters)
+	clusterConfigs, err := provider.CreateClusterConfigMap(tenantName, clusters, staticClusters)
 	if err != nil {
 		slog.Error("unable to create cluster configs", "error", err)
 		os.Exit(1)

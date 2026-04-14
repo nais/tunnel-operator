@@ -39,12 +39,6 @@ values:
       template: |
         {{ .Env.tunnel_operator_name | quote }}
 
-  tenant.domain:
-    displayName: Tenant domain
-    computed:
-      template: |
-        {{ .Env.tenant_domain | quote }}
-
   clusters:
     displayName: Tenant clusters
     description: Comma-separated list of tenant cluster names
