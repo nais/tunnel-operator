@@ -149,20 +149,20 @@ jobs:
             helm push "$chart" oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature
           done
 
-  rollout:
-    name: Rollout
-    if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
-    needs:
-      - build
-      - chart
-      - test-chart
-      - test
-      - lint
-    runs-on: fasit-deploy
-    permissions:
-      id-token: write
-    steps:
-      - uses: nais/fasit-deploy@v2 # ratchet:exclude
-        with:
-          chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator
-          version: ${{ needs.build.outputs.version }}
+  # rollout:
+  #   name: Rollout
+  #   if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
+  #   needs:
+  #     - build
+  #     - chart
+  #     - test-chart
+  #     - test
+  #     - lint
+  #   runs-on: fasit-deploy
+  #   permissions:
+  #     id-token: write
+  #   steps:
+  #     - uses: nais/fasit-deploy@v2 # ratchet:exclude
+  #       with:
+  #         chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator
+  #         version: ${{ needs.build.outputs.version }}
