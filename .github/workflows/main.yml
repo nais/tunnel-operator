@@ -147,6 +147,7 @@ jobs:
     needs:
       - build
       - build-gateway
+      - test-chart
     steps:
       - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # ratchet:actions/checkout@v5
       - id: "auth"

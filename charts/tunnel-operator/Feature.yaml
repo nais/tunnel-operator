@@ -1,3 +1,6 @@
+environmentKinds:
+  - management
+
 values:
   replicaCount:
     displayName: Replica count
