@@ -11,8 +11,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-const GoogleAuthPlugin = "gcp"
-
 // StaticCluster represents a cluster with static credentials (bearer token).
 type StaticCluster struct {
 	Name  string
