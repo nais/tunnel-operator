@@ -129,7 +129,7 @@ jobs:
         run: kind create cluster
       - name: Install tenant chart (CRD + RBAC)
         run: |
-          helm install tunnel-operator-tenant ./charts/tunnel-operator-tenant --create-namespace --namespace tunnel-operator-system
+          helm install tunnel-operator-tenant ./charts/tunnel-operator-tenant --create-namespace --namespace tunnel-operator-system --set serviceAccountEmail=test@example.iam.gserviceaccount.com
       - name: Install operator chart
         run: |
           helm install tunnel-operator ./charts/tunnel-operator --create-namespace --namespace tunnel-operator-system
