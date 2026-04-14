@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 )
 
 var _ = Describe("Tunnel Controller", func() {
@@ -29,6 +30,15 @@ var _ = Describe("Tunnel Controller", func() {
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
 			Namespace: namespace,
+		}
+
+		newRequest := func() mcreconcile.Request {
+			return mcreconcile.Request{
+				Request: reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				},
+				// Empty ClusterName targets the local cluster when provider is nil.
+			}
 		}
 
 		BeforeEach(func() {
@@ -96,21 +106,18 @@ var _ = Describe("Tunnel Controller", func() {
 				}
 			}
 		})
+
 		It("should create gateway resources and update status", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &TunnelReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				ClusterProvider: testClusterProv,
+				Scheme:          k8sClient.Scheme(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
+			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			pod := &corev1.Pod{}
@@ -148,18 +155,18 @@ var _ = Describe("Tunnel Controller", func() {
 
 		It("should reconcile idempotently after resources already exist", func() {
 			controllerReconciler := &TunnelReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				ClusterProvider: testClusterProv,
+				Scheme:          k8sClient.Scheme(),
 			}
 
 			By("running two reconciles to create all resources")
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			By("running a third reconcile with resources already present")
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			pod := &corev1.Pod{}
@@ -173,13 +180,13 @@ var _ = Describe("Tunnel Controller", func() {
 
 		It("should set correct env vars on the gateway pod", func() {
 			controllerReconciler := &TunnelReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				ClusterProvider: testClusterProv,
+				Scheme:          k8sClient.Scheme(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			pod := &corev1.Pod{}
@@ -202,12 +209,12 @@ var _ = Describe("Tunnel Controller", func() {
 
 		It("should delete the tunnel CR when status is Terminated", func() {
 			controllerReconciler := &TunnelReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				ClusterProvider: testClusterProv,
+				Scheme:          k8sClient.Scheme(),
 			}
 
 			By("running the first reconcile to add the finalizer")
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			By("setting tunnel status to Terminated")
@@ -217,7 +224,7 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(k8sClient.Status().Update(ctx, tunnel)).To(Succeed())
 
 			By("reconciling again to trigger CR deletion")
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			remaining := &v1alpha1.Tunnel{}
@@ -227,8 +234,8 @@ var _ = Describe("Tunnel Controller", func() {
 
 		It("should respect custom activeDeadlineSeconds on the gateway pod", func() {
 			controllerReconciler := &TunnelReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				ClusterProvider: testClusterProv,
+				Scheme:          k8sClient.Scheme(),
 			}
 
 			By("updating the tunnel spec with a custom deadline before reconciling")
@@ -238,9 +245,9 @@ var _ = Describe("Tunnel Controller", func() {
 			tunnel.Spec.ActiveDeadlineSeconds = &customDeadline
 			Expect(k8sClient.Update(ctx, tunnel)).To(Succeed())
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			pod := &corev1.Pod{}
@@ -251,14 +258,14 @@ var _ = Describe("Tunnel Controller", func() {
 
 		It("should clean up all gateway resources on tunnel deletion", func() {
 			controllerReconciler := &TunnelReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				ClusterProvider: testClusterProv,
+				Scheme:          k8sClient.Scheme(),
 			}
 
 			By("running two reconciles to create all gateway resources")
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			pod := &corev1.Pod{}
@@ -270,7 +277,7 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(k8sClient.Delete(ctx, tunnel)).To(Succeed())
 
 			By("reconciling to execute finalizer cleanup")
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, &corev1.Pod{}))).To(BeTrue())
@@ -283,13 +290,13 @@ var _ = Describe("Tunnel Controller", func() {
 
 		It("should restrict egress to the correct target IP and allow UDP for STUN/WireGuard", func() {
 			controllerReconciler := &TunnelReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				ClusterProvider: testClusterProv,
+				Scheme:          k8sClient.Scheme(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
 
 			networkPolicy := &networkingv1.NetworkPolicy{}

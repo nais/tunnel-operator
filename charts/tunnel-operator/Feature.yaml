@@ -5,6 +5,18 @@ values:
     config:
       type: int
 
+  resources.requests.cpu:
+    displayName: CPU request
+    description: Expected amount of CPU the operator container needs
+    config:
+      type: string
+
+  resources.requests.memory:
+    displayName: Memory request
+    description: Expected amount of memory the operator container needs
+    config:
+      type: string
+
   resources.limits.cpu:
     displayName: CPU limit
     description: Maximum amount of CPU the operator container can use
@@ -17,14 +29,32 @@ values:
     config:
       type: string
 
-  resources.requests.cpu:
-    displayName: CPU request
-    description: Expected amount of CPU the operator container needs
-    config:
-      type: string
+  serviceAccount.email:
+    displayName: GCP SA email
+    description: GCP service account email for Workload Identity
+    computed:
+      template: |
+        {{ .Env.tunnel_operator_serviceaccount_email | quote }}
 
-  resources.requests.memory:
-    displayName: Memory request
-    description: Expected amount of memory the operator container needs
+  tenant.domain:
+    displayName: Tenant domain
+    computed:
+      template: |
+        {{ .Env.tenant_domain | quote }}
+
+  clusters:
+    displayName: Tenant clusters
+    description: Comma-separated list of tenant cluster names
     config:
       type: string
+    computed:
+      template: |
+        {{- $tenantEnvs := filter "kind" "tenant" .Envs -}}
+        {{ eachOf $tenantEnvs "name" | sortAlpha | join "," }}
+
+  staticClusters:
+    displayName: Static clusters
+    description: Comma-separated list of clusters with static credentials on the format 'name|apiserverHost|token'
+    config:
+      type: string
+      secret: true

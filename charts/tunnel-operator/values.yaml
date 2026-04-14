@@ -1,15 +1,16 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/nais/tunnel-operator
+  repository: europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator
   pullPolicy: IfNotPresent
   tag: ""
 
-gatewayImage: ghcr.io/nais/tunnel-operator/gateway:latest
+gatewayImage: europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-gateway:latest
 
 serviceAccount:
   create: true
   name: tunnel-operator
+  email: ""
 
 resources:
   limits:
@@ -18,3 +19,10 @@ resources:
   requests:
     cpu: 50m
     memory: 64Mi
+
+tenant:
+  domain: example.com
+
+clusters: ""
+
+staticClusters: ""

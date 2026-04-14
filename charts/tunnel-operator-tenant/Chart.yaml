@@ -1,0 +1,8 @@
+apiVersion: v2
+name: tunnel-operator-tenant
+description: CRD and RBAC for the tunnel-operator in tenant clusters
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+sources:
+  - https://github.com/nais/tunnel-operator/tree/main/charts/tunnel-operator-tenant

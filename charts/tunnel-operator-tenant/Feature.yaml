@@ -1,0 +1,10 @@
+environmentKinds:
+  - tenant
+
+values:
+  serviceAccountEmail:
+    displayName: Operator GCP SA email
+    description: GCP service account email of the tunnel-operator (for RBAC binding)
+    computed:
+      template: |
+        {{ .Env.tunnel_operator_serviceaccount_email | quote }}

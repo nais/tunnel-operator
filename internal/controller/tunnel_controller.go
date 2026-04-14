@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 
+	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -14,17 +15,26 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
+	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
+	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 )
 
 const finalizerName = "tunnels.nais.io/cleanup"
 
+// ClusterProvider returns a cluster.Cluster for a given cluster name.
+// mcmanager.Manager satisfies this interface.
+type ClusterProvider interface {
+	GetCluster(ctx context.Context, clusterName multicluster.ClusterName) (cluster.Cluster, error)
+}
+
 type TunnelReconciler struct {
-	client.Client
-	Scheme *runtime.Scheme
+	ClusterProvider ClusterProvider
+	Scheme          *runtime.Scheme
 }
 
 //+kubebuilder:rbac:groups=nais.io,resources=tunnels,verbs=get;list;watch;create;update;patch;delete
@@ -35,16 +45,22 @@ type TunnelReconciler struct {
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
 
-func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
+func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("cluster", req.ClusterName)
+
+	cl, err := r.ClusterProvider.GetCluster(ctx, req.ClusterName)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("getting cluster %s: %w", req.ClusterName, err)
+	}
+	clusterClient := cl.GetClient()
 
 	tunnel := &v1alpha1.Tunnel{}
-	if err := r.Get(ctx, req.NamespacedName, tunnel); err != nil {
+	if err := clusterClient.Get(ctx, req.NamespacedName, tunnel); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	if !tunnel.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, tunnel)
+		return r.handleDeletion(ctx, clusterClient, tunnel)
 	}
 
 	if tunnel.Status.Phase == v1alpha1.TunnelPhaseTerminated {
@@ -59,19 +75,19 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
 		}
 		for _, obj := range objects {
-			if err := client.IgnoreNotFound(r.Delete(ctx, obj)); err != nil {
+			if err := client.IgnoreNotFound(clusterClient.Delete(ctx, obj)); err != nil {
 				return ctrl.Result{}, fmt.Errorf("deleting %T: %w", obj, err)
 			}
 		}
 
 		if controllerutil.ContainsFinalizer(tunnel, finalizerName) {
 			controllerutil.RemoveFinalizer(tunnel, finalizerName)
-			if err := r.Update(ctx, tunnel); err != nil {
+			if err := clusterClient.Update(ctx, tunnel); err != nil {
 				return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
 			}
 		}
 
-		if err := r.Delete(ctx, tunnel); err != nil {
+		if err := clusterClient.Delete(ctx, tunnel); err != nil {
 			return ctrl.Result{}, client.IgnoreNotFound(err)
 		}
 		return ctrl.Result{}, nil
@@ -79,7 +95,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	if !controllerutil.ContainsFinalizer(tunnel, finalizerName) {
 		controllerutil.AddFinalizer(tunnel, finalizerName)
-		return ctrl.Result{}, r.Update(ctx, tunnel)
+		return ctrl.Result{}, clusterClient.Update(ctx, tunnel)
 	}
 
 	resourceName := gatewayResourceName(tunnel.Name)
@@ -96,7 +112,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, sa, func() error {
 		sa.Labels = labels
 		return controllerutil.SetControllerReference(tunnel, sa, r.Scheme)
 	}); err != nil {
@@ -104,7 +120,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, role, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, role, func() error {
 		role.Labels = labels
 		role.Rules = []rbacv1.PolicyRule{
 			{
@@ -124,7 +140,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	roleBinding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, roleBinding, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, roleBinding, func() error {
 		roleBinding.Labels = labels
 		roleBinding.RoleRef = rbacv1.RoleRef{
 			APIGroup: rbacv1.GroupName,
@@ -142,7 +158,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, pod, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, pod, func() error {
 		pod.Labels = labels
 		pod.Spec = corev1.PodSpec{
 			ServiceAccountName:    saName,
@@ -167,7 +183,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	networkPolicy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, networkPolicy, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, networkPolicy, func() error {
 		networkPolicy.Labels = labels
 		networkPolicy.Spec = networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{
@@ -210,7 +226,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		updated = true
 	}
 	if updated {
-		if err := r.Status().Update(ctx, tunnel); err != nil {
+		if err := clusterClient.Status().Update(ctx, tunnel); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating tunnel status: %w", err)
 		}
 	}
@@ -220,7 +236,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{}, nil
 }
 
-func (r *TunnelReconciler) handleDeletion(ctx context.Context, tunnel *v1alpha1.Tunnel) (ctrl.Result, error) {
+func (r *TunnelReconciler) handleDeletion(ctx context.Context, clusterClient client.Client, tunnel *v1alpha1.Tunnel) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(tunnel, finalizerName) {
 		return ctrl.Result{}, nil
 	}
@@ -235,13 +251,13 @@ func (r *TunnelReconciler) handleDeletion(ctx context.Context, tunnel *v1alpha1.
 	}
 
 	for _, obj := range objects {
-		if err := client.IgnoreNotFound(r.Delete(ctx, obj)); err != nil {
+		if err := client.IgnoreNotFound(clusterClient.Delete(ctx, obj)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("deleting %T: %w", obj, err)
 		}
 	}
 
 	controllerutil.RemoveFinalizer(tunnel, finalizerName)
-	if err := r.Update(ctx, tunnel); err != nil {
+	if err := clusterClient.Update(ctx, tunnel); err != nil {
 		return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
 	}
 
@@ -268,8 +284,10 @@ func protocolPtr(p corev1.Protocol) *corev1.Protocol {
 	return &p
 }
 
-func (r *TunnelReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+func (r *TunnelReconciler) SetupWithManager(mgr mcmanager.Manager) error {
+	r.ClusterProvider = mgr
+	return mcbuilder.ControllerManagedBy(mgr).
+		Named("tunnel-controller").
 		For(&v1alpha1.Tunnel{}).
 		Complete(r)
 }

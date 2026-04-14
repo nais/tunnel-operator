@@ -25,6 +25,17 @@ spec:
         env:
         - name: GATEWAY_IMAGE
           value: {{ .Values.gatewayImage | quote }}
+        - name: TENANT_DOMAIN
+          value: {{ .Values.tenant.domain | quote }}
+        - name: CLUSTERS
+          value: {{ .Values.clusters | quote }}
+        {{- if .Values.staticClusters }}
+        - name: STATIC_CLUSTERS
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "tunnel-operator.fullname" . }}
+              key: static-clusters
+        {{- end }}
         ports:
         - name: metrics
           containerPort: 8080

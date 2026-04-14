@@ -80,9 +80,11 @@ jobs:
         run: |-
           for chart in charts/*; do
             yq e '.version = "${{ needs.build.outputs.version }}"' --inplace "${chart}/Chart.yaml"
-            yq e '.image.tag = "${{ needs.build.outputs.version }}"' --inplace "${chart}/values.yaml"
+            if [ -f "${chart}/values.yaml" ] && yq e '.image' "${chart}/values.yaml" | grep -qv '^null$'; then
+              yq e '.image.tag = "${{ needs.build.outputs.version }}"' --inplace "${chart}/values.yaml"
+            fi
           done
-      - name: Lint Helm Chart
+      - name: Lint Helm Charts
         run: |
           for chart in charts/*; do
             helm lint "${chart}"
@@ -96,18 +98,22 @@ jobs:
         run: kind version
       - name: Create kind cluster
         run: kind create cluster
-      - name: Install Helm chart for project
+      - name: Install tenant chart (CRD + RBAC)
         run: |
-          helm install my-release ./charts/tunnel-operator --create-namespace --namespace tunnel-operator-system
+          helm install tunnel-operator-tenant ./charts/tunnel-operator-tenant --create-namespace --namespace tunnel-operator-system
+      - name: Install operator chart
+        run: |
+          helm install tunnel-operator ./charts/tunnel-operator --create-namespace --namespace tunnel-operator-system
       - name: Check Helm release status
         run: |
-          helm status my-release --namespace tunnel-operator-system
+          helm status tunnel-operator-tenant --namespace tunnel-operator-system
+          helm status tunnel-operator --namespace tunnel-operator-system
 
   chart:
     permissions:
       contents: "read"
       id-token: "write"
-    name: Build and push chart
+    name: Build and push charts
     runs-on: ubuntu-latest
     needs:
       - build
@@ -135,34 +141,63 @@ jobs:
         run: |-
           for chart in charts/*; do
             yq e '.version = "${{ needs.build.outputs.version }}"' --inplace "${chart}/Chart.yaml"
-            yq e '.image.tag = "${{ needs.build.outputs.version }}"' --inplace "${chart}/values.yaml"
+            if [ -f "${chart}/values.yaml" ] && yq e '.image' "${chart}/values.yaml" | grep -qv '^null$'; then
+              yq e '.image.tag = "${{ needs.build.outputs.version }}"' --inplace "${chart}/values.yaml"
+            fi
           done
-      - name: Build Chart
+      - name: Build Charts
         run: |-
           for chart in charts/*; do
             helm package "$chart"
           done
-      - name: Push Chart
+      - name: Push Charts
         if: github.ref == 'refs/heads/main'
         run: |-
           for chart in *.tgz; do
             helm push "$chart" oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature
           done
 
-  # rollout:
-  #   name: Rollout
-  #   if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
-  #   needs:
-  #     - build
-  #     - chart
-  #     - test-chart
-  #     - test
-  #     - lint
-  #   runs-on: fasit-deploy
-  #   permissions:
-  #     id-token: write
-  #   steps:
-  #     - uses: nais/fasit-deploy@v2 # ratchet:exclude
-  #       with:
-  #         chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator
-  #         version: ${{ needs.build.outputs.version }}
+  rollout_tenant:
+    name: Rollout tenant
+    if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
+    needs:
+      - build
+      - chart
+      - test-chart
+      - test
+      - lint
+    runs-on: fasit-deploy
+    permissions:
+      id-token: write
+    steps:
+      - uses: nais/fasit-deploy@v3 # ratchet:exclude
+        if: github.ref == 'refs/heads/main'
+        with:
+          chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator-tenant
+          version: ${{ needs.build.outputs.version }}
+          skip-ci: true
+          target: |
+            {"kind": "tenant", "tenant": "dev-nais"}
+
+  rollout_operator:
+    name: Rollout operator
+    if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
+    needs:
+      - build
+      - chart
+      - test-chart
+      - test
+      - lint
+      - rollout-tenant
+    runs-on: fasit-deploy
+    permissions:
+      id-token: write
+    steps:
+      - uses: nais/fasit-deploy@v3 # ratchet:exclude
+        if: github.ref == 'refs/heads/main'
+        with:
+          chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator
+          version: ${{ needs.build.outputs.version }}
+          skip-ci: true
+          target: |
+            {"kind": "management", "tenant": "dev-nais"}

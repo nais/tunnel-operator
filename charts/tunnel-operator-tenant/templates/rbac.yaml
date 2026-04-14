@@ -1,9 +1,10 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "tunnel-operator.fullname" . }}
+  name: tunnel-operator
   labels:
-    {{- include "tunnel-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/name: tunnel-operator
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
 rules:
 - apiGroups: ["nais.io"]
   resources: ["tunnels"]
@@ -30,14 +31,15 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "tunnel-operator.fullname" . }}
+  name: tunnel-operator
   labels:
-    {{- include "tunnel-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/name: tunnel-operator
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "tunnel-operator.fullname" . }}
+  name: tunnel-operator
 subjects:
-- kind: ServiceAccount
-  name: {{ include "tunnel-operator.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
+- kind: User
+  name: {{ .Values.serviceAccountEmail | quote }}
+  apiGroup: rbac.authorization.k8s.io
