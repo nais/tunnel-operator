@@ -289,6 +289,7 @@ func gatewayLabels(tunnelName string) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/managed-by": "tunnel-operator",
 		"tunnels.nais.io/tunnel":       tunnelName,
+		"apiserver-access":             "enabled",
 	}
 }
 
