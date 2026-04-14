@@ -1,0 +1,30 @@
+values:
+  replicaCount:
+    displayName: Replica count
+    description: Number of operator replicas to run
+    config:
+      type: int
+
+  resources.limits.cpu:
+    displayName: CPU limit
+    description: Maximum amount of CPU the operator container can use
+    config:
+      type: string
+
+  resources.limits.memory:
+    displayName: Memory limit
+    description: Maximum amount of memory the operator container can use
+    config:
+      type: string
+
+  resources.requests.cpu:
+    displayName: CPU request
+    description: Expected amount of CPU the operator container needs
+    config:
+      type: string
+
+  resources.requests.memory:
+    displayName: Memory request
+    description: Expected amount of memory the operator container needs
+    config:
+      type: string

@@ -1,0 +1,168 @@
+name: Build and deploy
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    paths-ignore:
+      - "*.md"
+
+env:
+  GOOGLE_REGISTRY: "europe-north1-docker.pkg.dev"
+
+jobs:
+  lint:
+    name: Check project
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v5
+      - uses: jdx/mise-action@v4
+      - name: Running Checks
+        run: |
+          go mod tidy
+          mise run fmt
+          mise run vet
+
+  test:
+    name: Test project
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v5
+      - uses: jdx/mise-action@v4
+      - name: Running Tests
+        run: |
+          go mod tidy
+          mise run test
+
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # ratchet:actions/checkout@v5
+      - name: Install cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # ratchet:sigstore/cosign-installer@v4.0.0
+        with:
+          cosign-release: "v2.2.3"
+      - name: Verify runner image
+        run: cosign verify --certificate-identity keyless@distroless.iam.gserviceaccount.com --certificate-oidc-issuer https://accounts.google.com gcr.io/distroless/static-debian11
+      - uses: nais/platform-build-push-sign@main # ratchet:exclude
+        id: build-push-sign
+        with:
+          name: tunnel-operator
+          google_service_account: gh-tunnel-operator
+          push: ${{ github.actor != 'dependabot[bot]' }}
+          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
+          cache_from: type=gha
+          cache_to: type=gha,mode=max
+    outputs:
+      version: "${{ steps.build-push-sign.outputs.version }}"
+
+  test-chart:
+    name: Test chart / deploy
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v5
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # ratchet:azure/setup-helm@v3
+        name: "Setup Helm"
+        with:
+          version: "3.8.0"
+      - name: Set versions
+        run: |-
+          for chart in charts/*; do
+            yq e '.version = "${{ needs.build.outputs.version }}"' --inplace "${chart}/Chart.yaml"
+            yq e '.image.tag = "${{ needs.build.outputs.version }}"' --inplace "${chart}/values.yaml"
+          done
+      - name: Lint Helm Chart
+        run: |
+          for chart in charts/*; do
+            helm lint "${chart}"
+          done
+      - name: Install the latest version of kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+      - name: Verify kind installation
+        run: kind version
+      - name: Create kind cluster
+        run: kind create cluster
+      - name: Install Helm chart for project
+        run: |
+          helm install my-release ./charts/tunnel-operator --create-namespace --namespace tunnel-operator-system
+      - name: Check Helm release status
+        run: |
+          helm status my-release --namespace tunnel-operator-system
+
+  chart:
+    permissions:
+      contents: "read"
+      id-token: "write"
+    name: Build and push chart
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # ratchet:actions/checkout@v5
+      - id: "auth"
+        name: "Authenticate to Google Cloud"
+        if: github.ref == 'refs/heads/main'
+        uses: "google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093" # ratchet:google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: "gh-tunnel-operator@nais-io.iam.gserviceaccount.com"
+          token_format: "access_token"
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db" # ratchet:google-github-actions/setup-gcloud@v1
+      - name: "Log in to Google Artifact Registry"
+        if: github.ref == 'refs/heads/main'
+        run: |-
+          echo '${{ steps.auth.outputs.access_token }}' | docker login -u oauth2accesstoken --password-stdin https://${{ env.GOOGLE_REGISTRY }}
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # ratchet:azure/setup-helm@v3
+        name: "Setup Helm"
+        with:
+          version: "3.8.0"
+      - name: Set versions
+        run: |-
+          for chart in charts/*; do
+            yq e '.version = "${{ needs.build.outputs.version }}"' --inplace "${chart}/Chart.yaml"
+            yq e '.image.tag = "${{ needs.build.outputs.version }}"' --inplace "${chart}/values.yaml"
+          done
+      - name: Build Chart
+        run: |-
+          for chart in charts/*; do
+            helm package "$chart"
+          done
+      - name: Push Chart
+        if: github.ref == 'refs/heads/main'
+        run: |-
+          for chart in *.tgz; do
+            helm push "$chart" oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature
+          done
+
+  rollout:
+    name: Rollout
+    if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
+    needs:
+      - build
+      - chart
+      - test-chart
+      - test
+      - lint
+    runs-on: fasit-deploy
+    permissions:
+      id-token: write
+    steps:
+      - uses: nais/fasit-deploy@v2 # ratchet:exclude
+        with:
+          chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator
+          version: ${{ needs.build.outputs.version }}
