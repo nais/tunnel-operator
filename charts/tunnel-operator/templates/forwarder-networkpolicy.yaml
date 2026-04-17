@@ -1,0 +1,41 @@
+{{- if .Values.forwarder.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tunnel-operator.fullname" . }}-forwarder
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tunnel-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: forwarder
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "tunnel-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: forwarder
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: UDP
+          port: {{ .Values.forwarder.portRange.min }}
+          endPort: {{ .Values.forwarder.portRange.max }}
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: UDP
+          port: {{ .Values.forwarder.portRange.min }}
+          endPort: {{ .Values.forwarder.portRange.max }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "tunnel-operator.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 9090
+{{- end }}

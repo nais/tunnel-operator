@@ -1,0 +1,66 @@
+{{- if .Values.forwarder.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tunnel-operator.fullname" . }}-forwarder
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tunnel-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: forwarder
+spec:
+  replicas: {{ .Values.forwarder.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tunnel-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: forwarder
+  template:
+    metadata:
+      labels:
+        {{- include "tunnel-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: forwarder
+    spec:
+      serviceAccountName: {{ include "tunnel-operator.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: forwarder
+        image: "{{ .Values.forwarder.image.repository }}:{{ .Values.forwarder.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.forwarder.image.pullPolicy }}
+        env:
+        - name: OPERATOR_GRPC_ADDR
+          value: {{ .Values.forwarder.grpcAddr | quote }}
+        - name: HEALTH_ADDR
+          value: {{ .Values.forwarder.healthAddr | quote }}
+        - name: LB_VIP
+          value: {{ .Values.forwarder.lbVip | quote }}
+        ports:
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.forwarder.resources | nindent 10 }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65532
+          seccompProfile:
+            type: RuntimeDefault
+          capabilities:
+            drop:
+            - ALL
+{{- end }}

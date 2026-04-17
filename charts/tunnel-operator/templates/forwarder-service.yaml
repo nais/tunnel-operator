@@ -1,0 +1,28 @@
+{{- if .Values.forwarder.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tunnel-operator.fullname" . }}-forwarder
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tunnel-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: forwarder
+  annotations:
+    cloud.google.com/l4-rbs: "enabled"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+  selector:
+    {{- include "tunnel-operator.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: forwarder
+  ports:
+    # Placeholder LB port for provisioning; actual tunnel traffic is handled on dynamic ports.
+    - name: wireguard
+      port: 51820
+      targetPort: 51820
+      protocol: UDP
+{{- end }}
