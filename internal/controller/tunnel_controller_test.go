@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 
+	"github.com/nais/tunnel-operator/pkg/portalloc"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -38,6 +39,14 @@ var _ = Describe("Tunnel Controller", func() {
 					NamespacedName: typeNamespacedName,
 				},
 				// Empty ClusterName targets the local cluster when provider is nil.
+			}
+		}
+
+		newReconciler := func() *TunnelReconciler {
+			return &TunnelReconciler{
+				ClusterProvider: testClusterProv,
+				Scheme:          k8sClient.Scheme(),
+				PortAllocator:   portalloc.New(20000, 20010),
 			}
 		}
 
@@ -109,10 +118,7 @@ var _ = Describe("Tunnel Controller", func() {
 
 		It("should create gateway resources and update status", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &TunnelReconciler{
-				ClusterProvider: testClusterProv,
-				Scheme:          k8sClient.Scheme(),
-			}
+			controllerReconciler := newReconciler()
 
 			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
@@ -151,13 +157,11 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(tunnel.Status.Phase).To(Equal(v1alpha1.TunnelPhaseProvisioning))
 			Expect(tunnel.Status.Message).To(Equal("Gateway pod starting"))
 			Expect(tunnel.Status.GatewayPodName).To(Equal(gatewayResourceName(resourceName)))
+			Expect(tunnel.Status.ForwarderPort).To(BeNumerically(">", 0))
 		})
 
 		It("should reconcile idempotently after resources already exist", func() {
-			controllerReconciler := &TunnelReconciler{
-				ClusterProvider: testClusterProv,
-				Scheme:          k8sClient.Scheme(),
-			}
+			controllerReconciler := newReconciler()
 
 			By("running two reconciles to create all resources")
 			_, err := controllerReconciler.Reconcile(ctx, newRequest())
@@ -176,13 +180,11 @@ var _ = Describe("Tunnel Controller", func() {
 			tunnel := &v1alpha1.Tunnel{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
 			Expect(tunnel.Status.Phase).To(Equal(v1alpha1.TunnelPhaseProvisioning))
+			Expect(tunnel.Status.ForwarderPort).To(BeNumerically(">", 0))
 		})
 
 		It("should set correct env vars on the gateway pod", func() {
-			controllerReconciler := &TunnelReconciler{
-				ClusterProvider: testClusterProv,
-				Scheme:          k8sClient.Scheme(),
-			}
+			controllerReconciler := newReconciler()
 
 			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())
@@ -202,16 +204,12 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_PEER_PUBLIC_KEY", "client-public-key"))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_TARGET_HOST", "redis.example.internal"))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_TARGET_PORT", "6379"))
-			Expect(envByName).To(HaveKeyWithValue("STUN_SERVERS", "stun.cloudflare.com:3478,stun.l.google.com:19302"))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_NAME", resourceName))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_NAMESPACE", namespace))
 		})
 
 		It("should delete the tunnel CR when status is Terminated", func() {
-			controllerReconciler := &TunnelReconciler{
-				ClusterProvider: testClusterProv,
-				Scheme:          k8sClient.Scheme(),
-			}
+			controllerReconciler := newReconciler()
 
 			By("running the first reconcile to add the finalizer")
 			_, err := controllerReconciler.Reconcile(ctx, newRequest())
@@ -233,10 +231,7 @@ var _ = Describe("Tunnel Controller", func() {
 		})
 
 		It("should respect custom activeDeadlineSeconds on the gateway pod", func() {
-			controllerReconciler := &TunnelReconciler{
-				ClusterProvider: testClusterProv,
-				Scheme:          k8sClient.Scheme(),
-			}
+			controllerReconciler := newReconciler()
 
 			By("updating the tunnel spec with a custom deadline before reconciling")
 			tunnel := &v1alpha1.Tunnel{}
@@ -257,10 +252,7 @@ var _ = Describe("Tunnel Controller", func() {
 		})
 
 		It("should clean up all gateway resources on tunnel deletion", func() {
-			controllerReconciler := &TunnelReconciler{
-				ClusterProvider: testClusterProv,
-				Scheme:          k8sClient.Scheme(),
-			}
+			controllerReconciler := newReconciler()
 
 			By("running two reconciles to create all gateway resources")
 			_, err := controllerReconciler.Reconcile(ctx, newRequest())
@@ -288,11 +280,8 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(errors.IsNotFound(k8sClient.Get(ctx, typeNamespacedName, &v1alpha1.Tunnel{}))).To(BeTrue())
 		})
 
-		It("should restrict egress to the correct target IP and allow UDP for STUN/WireGuard", func() {
-			controllerReconciler := &TunnelReconciler{
-				ClusterProvider: testClusterProv,
-				Scheme:          k8sClient.Scheme(),
-			}
+		It("should restrict egress to the correct target IP and allow UDP for WireGuard", func() {
+			controllerReconciler := newReconciler()
 
 			_, err := controllerReconciler.Reconcile(ctx, newRequest())
 			Expect(err).NotTo(HaveOccurred())

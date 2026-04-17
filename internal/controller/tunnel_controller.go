@@ -3,16 +3,21 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 
 	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
+	operatorgrpc "github.com/nais/tunnel-operator/internal/grpc"
+	forwarderv1 "github.com/nais/tunnel-operator/pkg/forwarder/proto/forwarder/v1"
+	"github.com/nais/tunnel-operator/pkg/portalloc"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,6 +41,9 @@ type ClusterProvider interface {
 type TunnelReconciler struct {
 	ClusterProvider ClusterProvider
 	Scheme          *runtime.Scheme
+	PortAllocator   *portalloc.PortAllocator
+	ForwarderServer *operatorgrpc.ForwarderServer
+	LBVIP           string
 }
 
 //+kubebuilder:rbac:groups=nais.io,resources=tunnels,verbs=get;list;watch;create;update;patch;delete
@@ -87,6 +95,9 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 				return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
 			}
 		}
+
+		r.releaseForwarderPort(tunnel)
+		r.notifyTunnelUpdate(ctx, clusterClient, tunnel, forwarderv1.UpdateType_DELETED)
 
 		if err := clusterClient.Delete(ctx, tunnel); err != nil {
 			return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -178,7 +189,6 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 					{Name: "TUNNEL_PEER_PUBLIC_KEY", Value: tunnel.Spec.ClientPublicKey},
 					{Name: "TUNNEL_TARGET_HOST", Value: tunnel.Spec.Target.Host},
 					{Name: "TUNNEL_TARGET_PORT", Value: strconv.Itoa(int(tunnel.Spec.Target.Port))},
-					{Name: "STUN_SERVERS", Value: "stun.cloudflare.com:3478,stun.l.google.com:19302"},
 					{Name: "TUNNEL_NAME", Value: tunnel.Name},
 					{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
 				},
@@ -214,12 +224,12 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 					}},
 					Ports: []networkingv1.NetworkPolicyPort{{
 						Port:     intstrPtr(tunnel.Spec.Target.Port),
-						Protocol: protocolPtr(corev1.ProtocolTCP),
+						Protocol: ptr.To(corev1.ProtocolTCP),
 					}},
 				},
 				{
 					Ports: []networkingv1.NetworkPolicyPort{{
-						Protocol: protocolPtr(corev1.ProtocolUDP),
+						Protocol: ptr.To(corev1.ProtocolUDP),
 					}},
 				},
 			},
@@ -230,6 +240,16 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 	}
 
 	updated := false
+	updateType := forwarderv1.UpdateType_MODIFIED
+	if tunnel.Status.ForwarderPort == 0 && r.PortAllocator != nil {
+		allocatedPort, err := r.PortAllocator.Allocate(tunnelKey(tunnel))
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("allocating forwarder port: %w", err)
+		}
+		tunnel.Status.ForwarderPort = allocatedPort
+		updated = true
+		updateType = forwarderv1.UpdateType_ADDED
+	}
 	if tunnel.Status.Phase != v1alpha1.TunnelPhaseProvisioning {
 		tunnel.Status.Phase = v1alpha1.TunnelPhaseProvisioning
 		updated = true
@@ -242,10 +262,18 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 		tunnel.Status.GatewayPodName = resourceName
 		updated = true
 	}
+	if isPodReady(pod) {
+		forwarderEndpoint := net.JoinHostPort(r.LBVIP, strconv.Itoa(int(tunnel.Status.ForwarderPort)))
+		if tunnel.Status.ForwarderEndpoint != forwarderEndpoint {
+			tunnel.Status.ForwarderEndpoint = forwarderEndpoint
+			updated = true
+		}
+	}
 	if updated {
 		if err := clusterClient.Status().Update(ctx, tunnel); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating tunnel status: %w", err)
 		}
+		r.notifyTunnelUpdate(ctx, clusterClient, tunnel, updateType)
 	}
 
 	logger.Info("reconciled tunnel", "tunnel", req.NamespacedName, "pod", resourceName)
@@ -255,6 +283,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 
 func (r *TunnelReconciler) handleDeletion(ctx context.Context, clusterClient client.Client, tunnel *v1alpha1.Tunnel) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(tunnel, finalizerName) {
+		r.releaseForwarderPort(tunnel)
 		return ctrl.Result{}, nil
 	}
 
@@ -278,7 +307,50 @@ func (r *TunnelReconciler) handleDeletion(ctx context.Context, clusterClient cli
 		return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
 	}
 
+	r.releaseForwarderPort(tunnel)
+	r.notifyTunnelUpdate(ctx, clusterClient, tunnel, forwarderv1.UpdateType_DELETED)
+
 	return ctrl.Result{}, nil
+}
+
+func (r *TunnelReconciler) releaseForwarderPort(tunnel *v1alpha1.Tunnel) {
+	if r.PortAllocator == nil {
+		return
+	}
+
+	r.PortAllocator.Release(tunnelKey(tunnel))
+}
+
+func (r *TunnelReconciler) notifyTunnelUpdate(ctx context.Context, clusterClient client.Client, tunnel *v1alpha1.Tunnel, updateType forwarderv1.UpdateType) {
+	if r.ForwarderServer == nil || tunnel.Status.ForwarderPort <= 0 {
+		return
+	}
+
+	gatewayAddress := net.JoinHostPort(tunnel.Status.GatewayPodName, strconv.Itoa(51820))
+	if tunnel.Status.GatewayPodName != "" {
+		pod := &corev1.Pod{}
+		if err := clusterClient.Get(ctx, client.ObjectKey{Namespace: tunnel.Namespace, Name: tunnel.Status.GatewayPodName}, pod); err == nil && pod.Status.PodIP != "" {
+			gatewayAddress = net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(51820))
+		}
+	}
+
+	forwarderPort := tunnel.Status.ForwarderPort
+	tunnelName := tunnel.Name
+	tunnelNamespace := tunnel.Namespace
+
+	r.ForwarderServer.NotifyUpdate(&forwarderv1.TunnelUpdate{
+		Type: &updateType,
+		Tunnel: &forwarderv1.TunnelMapping{
+			TunnelName:      &tunnelName,
+			TunnelNamespace: &tunnelNamespace,
+			ForwarderPort:   &forwarderPort,
+			GatewayAddress:  &gatewayAddress,
+		},
+	})
+}
+
+func tunnelKey(tunnel *v1alpha1.Tunnel) string {
+	return tunnel.Namespace + "/" + tunnel.Name
 }
 
 func gatewayResourceName(tunnelName string) string {
@@ -298,8 +370,14 @@ func intstrPtr(i int32) *intstr.IntOrString {
 	return &v
 }
 
-func protocolPtr(p corev1.Protocol) *corev1.Protocol {
-	return &p
+func isPodReady(pod *corev1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+
+	return false
 }
 
 func (r *TunnelReconciler) SetupWithManager(mgr mcmanager.Manager) error {

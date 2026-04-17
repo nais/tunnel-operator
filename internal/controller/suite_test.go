@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -66,6 +69,11 @@ var (
 )
 
 func TestControllers(t *testing.T) {
+	assetsDir := envtestBinaryAssetsDirectory()
+	if _, err := os.Stat(assetsDir); err != nil {
+		t.Skipf("skipping controller suite: envtest binaries missing at %s", assetsDir)
+	}
+
 	RegisterFailHandler(Fail)
 
 	RunSpecs(t, "Controller Suite")
@@ -75,11 +83,11 @@ var _ = BeforeSuite(func() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
 	By("bootstrapping test environment")
+	assetsDir := envtestBinaryAssetsDirectory()
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
-		BinaryAssetsDirectory: filepath.Join("..", "..", "bin", "k8s",
-			fmt.Sprintf("1.34.0-%s-%s", goruntime.GOOS, goruntime.GOARCH)),
+		BinaryAssetsDirectory: assetsDir,
 	}
 
 	var err error
@@ -100,7 +108,39 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
+	if testEnv == nil {
+		return
+	}
 	By("tearing down the test environment")
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+func envtestBinaryAssetsDirectory() string {
+	preferred := filepath.Join("..", "..", "bin", "k8s", fmt.Sprintf("1.34.0-%s-%s", goruntime.GOOS, goruntime.GOARCH))
+	if _, err := os.Stat(preferred); err == nil {
+		return preferred
+	}
+
+	baseDir := filepath.Join("..", "..", "bin", "k8s")
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return preferred
+	}
+
+	suffix := fmt.Sprintf("-%s-%s", goruntime.GOOS, goruntime.GOARCH)
+	candidates := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasSuffix(entry.Name(), suffix) {
+			continue
+		}
+		candidates = append(candidates, entry.Name())
+	}
+
+	if len(candidates) == 0 {
+		return preferred
+	}
+
+	sort.Strings(candidates)
+	return filepath.Join(baseDir, candidates[len(candidates)-1])
+}
