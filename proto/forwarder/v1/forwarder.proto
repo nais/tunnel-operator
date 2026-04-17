@@ -1,0 +1,37 @@
+edition = "2023";
+
+package nais.tunnel.forwarder.v1;
+
+option go_package = "github.com/nais/tunnel-operator/pkg/forwarder/proto";
+
+service ForwarderConfigService {
+  rpc GetConfig(GetConfigRequest) returns (ForwarderConfig) {}
+  rpc StreamUpdates(StreamUpdatesRequest) returns (stream TunnelUpdate) {}
+}
+
+message GetConfigRequest {}
+
+message StreamUpdatesRequest {}
+
+message ForwarderConfig {
+  string lb_vip = 1;
+  repeated TunnelMapping tunnels = 2;
+}
+
+message TunnelMapping {
+  string tunnel_name = 1;
+  string tunnel_namespace = 2;
+  int32 forwarder_port = 3;
+  string gateway_address = 4;  // pod IP:port e.g. "10.0.0.5:51820"
+}
+
+enum UpdateType {
+  ADDED = 0;
+  MODIFIED = 1;
+  DELETED = 2;
+}
+
+message TunnelUpdate {
+  UpdateType type = 1;
+  TunnelMapping tunnel = 2;
+}

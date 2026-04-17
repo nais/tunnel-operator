@@ -5,6 +5,7 @@ pin = true
 go = "1.26.2"
 kube-controller-tools = "0.20.1"
 setup-envtest = "0.23.3"
+buf = "1.68.1"
 
 [tasks.build]
 description = "Build manager binary"
@@ -41,6 +42,10 @@ run = "controller-gen rbac:roleName=manager-role crd webhook paths='./...' outpu
 [tasks."generate:deepcopy"]
 description = "Generate DeepCopy methods"
 run = "controller-gen object:headerFile='hack/boilerplate.go.txt' paths='./...'"
+
+[tasks."generate:proto"]
+description = "Generate protobuf and gRPC code"
+run = "buf generate"
 
 [tasks."docker:build"]
 description = "Build docker image"
