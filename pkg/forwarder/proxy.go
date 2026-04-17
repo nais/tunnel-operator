@@ -23,10 +23,12 @@ type UDPProxy struct {
 }
 
 type portListener struct {
-	conn     *net.UDPConn
-	gateway  string
-	sessions *SessionMap
-	cancel   context.CancelFunc
+	conn            *net.UDPConn
+	gateway         string
+	tunnelName      string
+	tunnelNamespace string
+	sessions        *SessionMap
+	cancel          context.CancelFunc
 }
 
 func NewUDPProxy(idleTimeout time.Duration) *UDPProxy {
@@ -36,7 +38,7 @@ func NewUDPProxy(idleTimeout time.Duration) *UDPProxy {
 	}
 }
 
-func (p *UDPProxy) AddMapping(ctx context.Context, port int, gatewayAddr string) error {
+func (p *UDPProxy) AddMapping(ctx context.Context, port int, gatewayAddr, tunnelName, tunnelNamespace string) error {
 	p.mu.RLock()
 	existing, exists := p.mappings[port]
 	p.mu.RUnlock()
@@ -55,10 +57,12 @@ func (p *UDPProxy) AddMapping(ctx context.Context, port int, gatewayAddr string)
 
 	ctx, cancel := context.WithCancel(ctx)
 	pl := &portListener{
-		conn:     conn,
-		gateway:  gatewayAddr,
-		sessions: NewSessionMap(),
-		cancel:   cancel,
+		conn:            conn,
+		gateway:         gatewayAddr,
+		tunnelName:      tunnelName,
+		tunnelNamespace: tunnelNamespace,
+		sessions:        NewSessionMap(),
+		cancel:          cancel,
 	}
 
 	p.mu.Lock()
@@ -143,6 +147,9 @@ func (p *UDPProxy) servePort(ctx context.Context, listener *portListener) {
 		if _, err := session.upstreamConn.Write(buf[:n]); err != nil {
 			listener.sessions.Delete(clientAddr.String())
 			_ = session.upstreamConn.Close()
+		} else {
+			PacketsTotal.WithLabelValues(listener.tunnelName, listener.tunnelNamespace, DirectionClientToGateway).Inc()
+			BytesTotal.WithLabelValues(listener.tunnelName, listener.tunnelNamespace, DirectionClientToGateway).Add(float64(n))
 		}
 	}
 }
@@ -165,12 +172,14 @@ func (p *UDPProxy) getOrCreateSession(listener *portListener, clientAddr *net.UD
 
 	session := NewSession(clientAddr, upstreamConn)
 	listener.sessions.Set(key, session)
+	ActiveSessions.WithLabelValues(listener.tunnelName, listener.tunnelNamespace).Inc()
 	go p.pipeResponses(listener, key, session)
 
 	return session, nil
 }
 
 func (p *UDPProxy) pipeResponses(listener *portListener, key string, session *Session) {
+	defer ActiveSessions.WithLabelValues(listener.tunnelName, listener.tunnelNamespace).Dec()
 	buf := make([]byte, udpBufferSize)
 
 	for {
@@ -187,6 +196,8 @@ func (p *UDPProxy) pipeResponses(listener *portListener, key string, session *Se
 			_ = session.upstreamConn.Close()
 			return
 		}
+		PacketsTotal.WithLabelValues(listener.tunnelName, listener.tunnelNamespace, DirectionGatewayToClient).Inc()
+		BytesTotal.WithLabelValues(listener.tunnelName, listener.tunnelNamespace, DirectionGatewayToClient).Add(float64(n))
 	}
 }
 

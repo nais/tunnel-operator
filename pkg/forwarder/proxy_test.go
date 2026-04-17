@@ -22,7 +22,7 @@ func TestUDPProxyAddMappingForwardsPackets(t *testing.T) {
 		proxy.Close()
 	})
 
-	if err := proxy.AddMapping(ctx, proxyPort, echoConn.LocalAddr().String()); err != nil {
+	if err := proxy.AddMapping(ctx, proxyPort, echoConn.LocalAddr().String(), "test-tunnel", "default"); err != nil {
 		t.Fatalf("add mapping: %v", err)
 	}
 
@@ -52,7 +52,7 @@ func TestUDPProxyRemoveMappingStopsListening(t *testing.T) {
 		proxy.Close()
 	})
 
-	if err := proxy.AddMapping(ctx, proxyPort, echoConn.LocalAddr().String()); err != nil {
+	if err := proxy.AddMapping(ctx, proxyPort, echoConn.LocalAddr().String(), "test-tunnel", "default"); err != nil {
 		t.Fatalf("add mapping: %v", err)
 	}
 
@@ -81,7 +81,7 @@ func TestUDPProxySessionCleanupRemovesIdleSession(t *testing.T) {
 		proxy.Close()
 	})
 
-	if err := proxy.AddMapping(ctx, proxyPort, echoConn.LocalAddr().String()); err != nil {
+	if err := proxy.AddMapping(ctx, proxyPort, echoConn.LocalAddr().String(), "test-tunnel", "default"); err != nil {
 		t.Fatalf("add mapping: %v", err)
 	}
 

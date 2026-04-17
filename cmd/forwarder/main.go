@@ -149,7 +149,7 @@ func applyMappings(ctx context.Context, proxy *forwarder.UDPProxy, mappings []*f
 			continue
 		}
 
-		if err := proxy.AddMapping(ctx, port, gatewayAddr); err != nil {
+		if err := proxy.AddMapping(ctx, port, gatewayAddr, mapping.GetTunnelName(), mapping.GetTunnelNamespace()); err != nil {
 			return fmt.Errorf("add mapping for port %d: %w", port, err)
 		}
 	}
@@ -178,7 +178,7 @@ func handleUpdate(ctx context.Context, proxy *forwarder.UDPProxy, logger *slog.L
 			return
 		}
 
-		if err := proxy.AddMapping(ctx, port, gatewayAddr); err != nil {
+		if err := proxy.AddMapping(ctx, port, gatewayAddr, mapping.GetTunnelName(), mapping.GetTunnelNamespace()); err != nil {
 			logger.Error("failed to apply tunnel update", "port", port, "gatewayAddr", gatewayAddr, "type", update.GetType().String(), "err", err)
 			return
 		}

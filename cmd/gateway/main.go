@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -16,6 +18,7 @@ import (
 
 	naisiov1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
 	"github.com/nais/tunnel-operator/pkg/wireguard"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -49,6 +52,21 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	targetPortStr := requireEnv("TUNNEL_TARGET_PORT")
 	tunnelName := requireEnv("TUNNEL_NAME")
 	tunnelNamespace := requireEnv("TUNNEL_NAMESPACE")
+
+	metrics := newGatewayMetrics(tunnelName, tunnelNamespace, targetHost, targetPortStr)
+
+	go func() {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", promhttp.Handler())
+		metricsServer := &http.Server{
+			Addr:              ":9091",
+			Handler:           metricsMux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metrics server error", "err", err)
+		}
+	}()
 
 	targetPort, err := strconv.Atoi(targetPortStr)
 	if err != nil {
@@ -100,7 +118,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	activityCh := make(chan struct{}, 1)
-	go serveTCPProxy(ctx, listener, targetAddr, logger, errCh, activityCh)
+	go serveTCPProxy(ctx, listener, targetAddr, logger, errCh, activityCh, metrics)
 
 	peerTimeout := time.Duration(3*wireguard.PersistentKeepalive) * time.Second
 	logger.Info("gateway ready, waiting for peer connection", "peerTimeout", peerTimeout.String())
@@ -154,7 +172,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	return nil
 }
 
-func serveTCPProxy(ctx context.Context, listener net.Listener, targetAddr string, logger *slog.Logger, errCh chan<- error, activityCh chan<- struct{}) {
+func serveTCPProxy(ctx context.Context, listener net.Listener, targetAddr string, logger *slog.Logger, errCh chan<- error, activityCh chan<- struct{}, m *gatewayMetrics) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -175,12 +193,16 @@ func serveTCPProxy(ctx context.Context, listener net.Listener, targetAddr string
 		case activityCh <- struct{}{}:
 		default:
 		}
-		go handleConn(conn, targetAddr, logger)
+		go handleConn(conn, targetAddr, logger, m)
 	}
 }
 
-func handleConn(src net.Conn, targetAddr string, logger *slog.Logger) {
+func handleConn(src net.Conn, targetAddr string, logger *slog.Logger, m *gatewayMetrics) {
 	defer src.Close()
+
+	m.tcpConnectionsTotal.Inc()
+	m.tcpConnectionsActive.Inc()
+	defer m.tcpConnectionsActive.Dec()
 
 	dst, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
 	if err != nil {
@@ -191,11 +213,13 @@ func handleConn(src net.Conn, targetAddr string, logger *slog.Logger) {
 
 	done := make(chan struct{}, 2)
 	go func() {
-		_, _ = copyAndClose(dst, src)
+		n, _ := copyAndClose(dst, src)
+		m.tcpReceivedBytes.Add(float64(n))
 		done <- struct{}{}
 	}()
 	go func() {
-		_, _ = copyAndClose(src, dst)
+		n, _ := copyAndClose(src, dst)
+		m.tcpSentBytes.Add(float64(n))
 		done <- struct{}{}
 	}()
 	<-done
