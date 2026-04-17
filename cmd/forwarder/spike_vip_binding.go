@@ -1,14 +1,7 @@
 //go:build ignore
 
-// Package main contains a spike test for VIP binding behavior.
+// Package main contains a small spike for VIP binding behavior.
 // Run with: go run spike_vip_binding.go
-//
-// FINDINGS: GCP regional external passthrough UDP load balancers use direct
-// server return. With externalTrafficPolicy=Local, GKE preserves the client IP
-// on ingress, but UDP replies are not automatically rewritten to the LB VIP.
-// DECISION: VIPBindingNeeded = true
-// REASON: NAT-sensitive clients send to the LB VIP and can drop replies that
-// come back from the pod/node IP instead of the VIP.
 package main
 
 import (
@@ -20,44 +13,11 @@ import (
 	"time"
 )
 
-// VIPBindingNeeded is the Task 4 decision.
-//
-// YES: for a UDP forwarder behind a GKE external passthrough L4 load balancer
-// with externalTrafficPolicy=Local, the application must ensure replies use the
-// load balancer VIP as the source address. GKE preserves the client source IP on
-// ingress, but it does not automatically rewrite UDP reply packets so they leave
-// with the VIP on the return path. Without explicit VIP binding (or equivalent
-// kernel NAT/mangling), replies leave with the pod/node IP and NAT-sensitive
-// clients can drop them.
+// VIPBindingNeeded records the spike's conclusion.
 const VIPBindingNeeded = true
 
 // This spike is intentionally standalone and excluded from normal builds.
-//
-// Research summary:
-//   - GCP's UDP passthrough load balancer documentation explicitly calls out the
-//     DSR problem for UDP: because UDP is stateless, the kernel does not know to
-//     use the load balancer VIP as the source of the response packet.
-//   - GKE LoadBalancer documentation says externalTrafficPolicy=Local preserves
-//     the original client source IP and avoids node SNAT for local-pod delivery.
-//   - Backend service-based passthrough NLB docs say replies go directly from
-//     backend to client, not back through the load balancer.
-//
-// Final decision for Task 11:
-//   - The forwarder should assume VIP binding is required for UDP replies.
-//   - Acceptable implementations include app-level binding/IP_PKTINFO or node/pod
-//     level NAT/mangling that makes replies leave with the VIP.
-//   - If the chosen deployment model cannot actually source packets from the VIP,
-//     do not rely on conntrack magically fixing it for UDP.
-//
-// Suggested GKE validation:
-//   1. Deploy the forwarder behind the external passthrough LB.
-//   2. From an external client, send UDP to the LB VIP.
-//   3. Capture packets in the pod/node and on the client.
-//   4. Verify the response source IP is the LB VIP, not the pod/node IP.
-//   5. Repeat with and without explicit VIP binding / packet-info handling.
-//
-// This local program cannot reproduce GKE's dataplane, but it demonstrates the
-// underlying kernel behavior: a UDP socket reply uses the local socket/interface
+// It demonstrates that a UDP socket reply uses the local socket/interface
 // address unless the application explicitly chooses a source IP.
 
 func main() {

@@ -38,7 +38,6 @@ var _ = Describe("Tunnel Controller", func() {
 				Request: reconcile.Request{
 					NamespacedName: typeNamespacedName,
 				},
-				// Empty ClusterName targets the local cluster when provider is nil.
 			}
 		}
 

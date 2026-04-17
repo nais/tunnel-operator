@@ -12,7 +12,7 @@ import (
 const udpBufferSize = 65535
 
 type PortMapping struct {
-	GatewayAddr string // "podIP:51820"
+	GatewayAddr string
 }
 
 type UDPProxy struct {

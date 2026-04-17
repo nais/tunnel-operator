@@ -54,8 +54,8 @@ func newDevice(privateKey wgtypes.Key, peerPublicKey wgtypes.Key, endpoint strin
 
 	tun, net, err := netstack.CreateNetTUN(
 		[]netip.Addr{prefix.Addr()},
-		[]netip.Addr{}, // no DNS
-		1420,           // MTU
+		[]netip.Addr{},
+		1420,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create netstack TUN: %w", err)
@@ -67,7 +67,6 @@ func newDevice(privateKey wgtypes.Key, peerPublicKey wgtypes.Key, endpoint strin
 	logger := device.NewLogger(device.LogLevelError, "[wireguard] ")
 	dev := device.NewDevice(tun, bind, logger)
 
-	// Configure WireGuard: set private key and peer.
 	cfg := fmt.Sprintf(`private_key=%s
 %spublic_key=%s
 persistent_keepalive_interval=%d
