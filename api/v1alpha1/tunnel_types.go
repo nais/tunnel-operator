@@ -26,17 +26,17 @@ type TunnelSpec struct {
 	Environment           string       `json:"environment"`
 	Target                TunnelTarget `json:"target"`
 	ClientPublicKey       string       `json:"clientPublicKey"`
-	ClientSTUNEndpoint    string       `json:"clientSTUNEndpoint,omitempty"`
 	ActiveDeadlineSeconds *int64       `json:"activeDeadlineSeconds,omitempty"`
 }
 
 type TunnelStatus struct {
-	Phase               TunnelPhase        `json:"phase,omitempty"`
-	GatewayPublicKey    string             `json:"gatewayPublicKey,omitempty"`
-	GatewaySTUNEndpoint string             `json:"gatewaySTUNEndpoint,omitempty"`
-	GatewayPodName      string             `json:"gatewayPodName,omitempty"`
-	Message             string             `json:"message,omitempty"`
-	Conditions          []metav1.Condition `json:"conditions,omitempty"`
+	Phase             TunnelPhase        `json:"phase,omitempty"`
+	GatewayPublicKey  string             `json:"gatewayPublicKey,omitempty"`
+	ForwarderPort     int32              `json:"forwarderPort,omitempty"`
+	ForwarderEndpoint string             `json:"forwarderEndpoint,omitempty"`
+	GatewayPodName    string             `json:"gatewayPodName,omitempty"`
+	Message           string             `json:"message,omitempty"`
+	Conditions        []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true

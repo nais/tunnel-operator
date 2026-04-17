@@ -68,9 +68,6 @@ spec:
               clientPublicKey:
                 type: string
                 description: WireGuard public key from the CLI
-              clientSTUNEndpoint:
-                type: string
-                description: CLI's STUN-discovered UDP endpoint
               activeDeadlineSeconds:
                 type: integer
                 format: int64
@@ -91,9 +88,13 @@ spec:
               gatewayPublicKey:
                 type: string
                 description: Gateway's WireGuard public key
-              gatewaySTUNEndpoint:
+              forwarderPort:
+                type: integer
+                format: int32
+                description: Port exposed by the forwarder
+              forwarderEndpoint:
                 type: string
-                description: Gateway's STUN-discovered UDP endpoint
+                description: Forwarder endpoint advertised to clients
               gatewayPodName:
                 type: string
                 description: Name of the gateway pod

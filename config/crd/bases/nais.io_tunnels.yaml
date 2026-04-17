@@ -49,8 +49,6 @@ spec:
                 type: integer
               clientPublicKey:
                 type: string
-              clientSTUNEndpoint:
-                type: string
               environment:
                 type: string
               target:
@@ -133,11 +131,14 @@ spec:
                   - type
                   type: object
                 type: array
+              forwarderEndpoint:
+                type: string
+              forwarderPort:
+                format: int32
+                type: integer
               gatewayPodName:
                 type: string
               gatewayPublicKey:
-                type: string
-              gatewaySTUNEndpoint:
                 type: string
               message:
                 type: string

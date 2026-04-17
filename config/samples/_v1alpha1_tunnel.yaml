@@ -9,4 +9,10 @@ metadata:
     app.kubernetes.io/created-by: operator
   name: tunnel-sample
 spec:
-  # TODO(user): Add fields here
+  teamSlug: sample-team
+  environment: dev
+  clientPublicKey: sample-public-key
+  target:
+    host: redis.example.com
+    port: 6379
+    resolvedIP: 10.0.0.10
