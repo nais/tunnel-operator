@@ -44,9 +44,11 @@ var _ = Describe("Tunnel Controller", func() {
 
 		newReconciler := func() *TunnelReconciler {
 			return &TunnelReconciler{
-				ClusterProvider: testClusterProv,
-				Scheme:          k8sClient.Scheme(),
-				PortAllocator:   portalloc.New(20000, 20010),
+				ClusterProvider:     testClusterProv,
+				Scheme:              k8sClient.Scheme(),
+				PortAllocator:       portalloc.New(20000, 20010),
+				LocalClient:         k8sClient,
+				ForwarderServiceKey: client.ObjectKey{Name: "test-forwarder", Namespace: namespace},
 			}
 		}
 

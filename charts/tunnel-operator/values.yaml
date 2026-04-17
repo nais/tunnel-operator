@@ -8,8 +8,6 @@ image:
 grpc:
   port: 9090
 
-lbVIP: ""
-
 forwarderPortRange:
   min: 10000
   max: 60000
@@ -63,4 +61,3 @@ forwarder:
     max: 60000
   grpcAddr: "tunnel-operator:9090"
   healthAddr: ":8080"
-  lbVip: ""

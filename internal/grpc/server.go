@@ -22,19 +22,19 @@ const gatewayPort = 51820
 
 type ForwarderServer struct {
 	forwarderv1.UnimplementedForwarderConfigServiceServer
-	client    client.Client
-	allocator *portalloc.PortAllocator
-	lbVIP     string
-	mu        sync.RWMutex
-	streams   []chan *forwarderv1.TunnelUpdate
+	client              client.Client
+	allocator           *portalloc.PortAllocator
+	forwarderServiceKey client.ObjectKey
+	mu                  sync.RWMutex
+	streams             []chan *forwarderv1.TunnelUpdate
 }
 
-func NewForwarderServer(client client.Client, allocator *portalloc.PortAllocator, lbVIP string) *ForwarderServer {
+func NewForwarderServer(client client.Client, allocator *portalloc.PortAllocator, forwarderServiceKey client.ObjectKey) *ForwarderServer {
 	return &ForwarderServer{
-		client:    client,
-		allocator: allocator,
-		lbVIP:     lbVIP,
-		streams:   make([]chan *forwarderv1.TunnelUpdate, 0),
+		client:              client,
+		allocator:           allocator,
+		forwarderServiceKey: forwarderServiceKey,
+		streams:             make([]chan *forwarderv1.TunnelUpdate, 0),
 	}
 }
 
@@ -63,8 +63,8 @@ func (s *ForwarderServer) GetConfig(ctx context.Context, _ *forwarderv1.GetConfi
 	}
 
 	config := &forwarderv1.ForwarderConfig{Tunnels: mappings}
-	if s.lbVIP != "" {
-		config.LbVip = &s.lbVIP
+	if vip := s.resolveVIP(ctx); vip != "" {
+		config.LbVip = &vip
 	}
 
 	return config, nil
@@ -179,4 +179,23 @@ func (s *ForwarderServer) tunnelMapping(ctx context.Context, tunnel *v1alpha1.Tu
 
 func tunnelKey(namespace, name string) string {
 	return namespace + "/" + name
+}
+
+func (s *ForwarderServer) resolveVIP(ctx context.Context) string {
+	if s.forwarderServiceKey.Name == "" {
+		return ""
+	}
+
+	svc := &corev1.Service{}
+	if err := s.client.Get(ctx, s.forwarderServiceKey, svc); err != nil {
+		return ""
+	}
+
+	for _, ingress := range svc.Status.LoadBalancer.Ingress {
+		if ingress.IP != "" {
+			return ingress.IP
+		}
+	}
+
+	return ""
 }

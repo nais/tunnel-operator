@@ -47,7 +47,8 @@ func main() {
 	if grpcAddr == "" {
 		grpcAddr = ":9090"
 	}
-	lbVIP := os.Getenv("LB_VIP")
+	forwarderServiceName := os.Getenv("FORWARDER_SERVICE_NAME")
+	podNamespace := os.Getenv("POD_NAMESPACE")
 
 	var clusters []string
 	if clusterNames != "" {
@@ -88,14 +89,16 @@ func main() {
 	localMgr := mgr.GetLocalManager()
 
 	allocator := portalloc.New(10000, 60000)
-	grpcServer := operatorgrpc.NewForwarderServer(localMgr.GetClient(), allocator, lbVIP)
+	forwarderServiceKey := client.ObjectKey{Name: forwarderServiceName, Namespace: podNamespace}
+	grpcServer := operatorgrpc.NewForwarderServer(localMgr.GetClient(), allocator, forwarderServiceKey)
 	loadExistingAllocations(context.Background(), localMgr.GetAPIReader(), allocator)
 
 	if err := (&controller.TunnelReconciler{
-		Scheme:          scheme,
-		PortAllocator:   allocator,
-		ForwarderServer: grpcServer,
-		LBVIP:           lbVIP,
+		Scheme:              scheme,
+		PortAllocator:       allocator,
+		ForwarderServer:     grpcServer,
+		LocalClient:         localMgr.GetClient(),
+		ForwarderServiceKey: forwarderServiceKey,
 	}).SetupWithManager(mgr); err != nil {
 		slog.Error("unable to create controller", "controller", "Tunnel", "error", err)
 		os.Exit(1)

@@ -33,8 +33,6 @@ spec:
           value: {{ .Values.forwarder.grpcAddr | quote }}
         - name: HEALTH_ADDR
           value: {{ .Values.forwarder.healthAddr | quote }}
-        - name: LB_VIP
-          value: {{ .Values.forwarder.lbVip | quote }}
         ports:
         - name: health
           containerPort: 8080

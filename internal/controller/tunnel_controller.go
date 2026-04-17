@@ -39,17 +39,19 @@ type ClusterProvider interface {
 }
 
 type TunnelReconciler struct {
-	ClusterProvider ClusterProvider
-	Scheme          *runtime.Scheme
-	PortAllocator   *portalloc.PortAllocator
-	ForwarderServer *operatorgrpc.ForwarderServer
-	LBVIP           string
+	ClusterProvider     ClusterProvider
+	Scheme              *runtime.Scheme
+	PortAllocator       *portalloc.PortAllocator
+	ForwarderServer     *operatorgrpc.ForwarderServer
+	LocalClient         client.Client
+	ForwarderServiceKey client.ObjectKey
 }
 
 //+kubebuilder:rbac:groups=nais.io,resources=tunnels,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=nais.io,resources=tunnels/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=nais.io,resources=tunnels/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
+//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
@@ -263,10 +265,13 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 		updated = true
 	}
 	if isPodReady(pod) {
-		forwarderEndpoint := net.JoinHostPort(r.LBVIP, strconv.Itoa(int(tunnel.Status.ForwarderPort)))
-		if tunnel.Status.ForwarderEndpoint != forwarderEndpoint {
-			tunnel.Status.ForwarderEndpoint = forwarderEndpoint
-			updated = true
+		vip, err := r.resolveForwarderVIP(ctx)
+		if err == nil && vip != "" {
+			forwarderEndpoint := net.JoinHostPort(vip, strconv.Itoa(int(tunnel.Status.ForwarderPort)))
+			if tunnel.Status.ForwarderEndpoint != forwarderEndpoint {
+				tunnel.Status.ForwarderEndpoint = forwarderEndpoint
+				updated = true
+			}
 		}
 	}
 	if updated {
@@ -311,6 +316,25 @@ func (r *TunnelReconciler) handleDeletion(ctx context.Context, clusterClient cli
 	r.notifyTunnelUpdate(ctx, clusterClient, tunnel, forwarderv1.UpdateType_DELETED)
 
 	return ctrl.Result{}, nil
+}
+
+func (r *TunnelReconciler) resolveForwarderVIP(ctx context.Context) (string, error) {
+	if r.LocalClient == nil || r.ForwarderServiceKey.Name == "" {
+		return "", fmt.Errorf("forwarder service not configured")
+	}
+
+	svc := &corev1.Service{}
+	if err := r.LocalClient.Get(ctx, r.ForwarderServiceKey, svc); err != nil {
+		return "", fmt.Errorf("getting forwarder service %s: %w", r.ForwarderServiceKey, err)
+	}
+
+	for _, ingress := range svc.Status.LoadBalancer.Ingress {
+		if ingress.IP != "" {
+			return ingress.IP, nil
+		}
+	}
+
+	return "", fmt.Errorf("forwarder service %s has no load balancer IP", r.ForwarderServiceKey)
 }
 
 func (r *TunnelReconciler) releaseForwarderPort(tunnel *v1alpha1.Tunnel) {

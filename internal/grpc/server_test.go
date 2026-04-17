@@ -8,6 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
@@ -19,7 +20,7 @@ func TestGetConfigReturnsEmptyConfigWhenNoTunnels(t *testing.T) {
 	t.Parallel()
 
 	scheme := newTestScheme(t)
-	server := NewForwarderServer(fake.NewClientBuilder().WithScheme(scheme).Build(), portalloc.New(10000, 10010), "")
+	server := NewForwarderServer(fake.NewClientBuilder().WithScheme(scheme).Build(), portalloc.New(10000, 10010), client.ObjectKey{})
 
 	config, err := server.GetConfig(context.Background(), &forwarderv1.GetConfigRequest{})
 	if err != nil {
@@ -39,6 +40,7 @@ func TestGetConfigReturnsTunnelMappingsForAllocatedTunnels(t *testing.T) {
 
 	scheme := newTestScheme(t)
 	allocator := portalloc.New(10000, 10010)
+	forwarderSvcKey := client.ObjectKey{Name: "forwarder-svc", Namespace: "default"}
 	server := NewForwarderServer(
 		fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 			&v1alpha1.Tunnel{
@@ -55,9 +57,17 @@ func TestGetConfigReturnsTunnelMappingsForAllocatedTunnels(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "gateway-a", Namespace: "default"},
 				Status:     corev1.PodStatus{PodIP: "10.42.0.15"},
 			},
+			&corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "forwarder-svc", Namespace: "default"},
+				Status: corev1.ServiceStatus{
+					LoadBalancer: corev1.LoadBalancerStatus{
+						Ingress: []corev1.LoadBalancerIngress{{IP: "192.0.2.10"}},
+					},
+				},
+			},
 		).Build(),
 		allocator,
-		"192.0.2.10",
+		forwarderSvcKey,
 	)
 
 	config, err := server.GetConfig(context.Background(), &forwarderv1.GetConfigRequest{})
