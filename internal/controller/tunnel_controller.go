@@ -56,7 +56,15 @@ type TunnelReconciler struct {
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
 
-func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
+func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (result ctrl.Result, retErr error) {
+	defer func() {
+		if retErr != nil {
+			reconciliationsTotal.WithLabelValues("error").Inc()
+		} else {
+			reconciliationsTotal.WithLabelValues("success").Inc()
+		}
+	}()
+
 	logger := log.FromContext(ctx).WithValues("cluster", req.ClusterName)
 
 	cl, err := r.ClusterProvider.GetCluster(ctx, req.ClusterName)
@@ -174,6 +182,11 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, pod, func() error {
 		pod.Labels = labels
+		pod.Annotations = map[string]string{
+			"prometheus.io/scrape": "true",
+			"prometheus.io/port":   "9091",
+			"prometheus.io/path":   "/metrics",
+		}
 		pod.Spec = corev1.PodSpec{
 			ServiceAccountName:    saName,
 			RestartPolicy:         corev1.RestartPolicyNever,
@@ -187,6 +200,11 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 			Containers: []corev1.Container{{
 				Name:  "gateway",
 				Image: gatewayImage,
+				Ports: []corev1.ContainerPort{{
+					Name:          "metrics",
+					ContainerPort: 9091,
+					Protocol:      corev1.ProtocolTCP,
+				}},
 				Env: []corev1.EnvVar{
 					{Name: "TUNNEL_PEER_PUBLIC_KEY", Value: tunnel.Spec.ClientPublicKey},
 					{Name: "TUNNEL_TARGET_HOST", Value: tunnel.Spec.Target.Host},
@@ -249,6 +267,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 			return ctrl.Result{}, fmt.Errorf("allocating forwarder port: %w", err)
 		}
 		tunnel.Status.ForwarderPort = allocatedPort
+		portAllocationsActive.Inc()
 		updated = true
 		updateType = forwarderv1.UpdateType_ADDED
 	}
@@ -278,6 +297,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 		if err := clusterClient.Status().Update(ctx, tunnel); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating tunnel status: %w", err)
 		}
+		tunnelsActive.WithLabelValues(string(tunnel.Status.Phase), tunnel.Namespace).Inc()
 		r.notifyTunnelUpdate(ctx, clusterClient, tunnel, updateType)
 	}
 
@@ -343,6 +363,7 @@ func (r *TunnelReconciler) releaseForwarderPort(tunnel *v1alpha1.Tunnel) {
 	}
 
 	r.PortAllocator.Release(tunnelKey(tunnel))
+	portAllocationsActive.Dec()
 }
 
 func (r *TunnelReconciler) notifyTunnelUpdate(ctx context.Context, clusterClient client.Client, tunnel *v1alpha1.Tunnel, updateType forwarderv1.UpdateType) {
