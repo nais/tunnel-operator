@@ -46,11 +46,6 @@ func NewDevice(privateKey wgtypes.Key, peerPublicKey wgtypes.Key, endpoint strin
 	return newDevice(privateKey, peerPublicKey, endpoint, conn.NewDefaultBind(), fmt.Sprintf("listen_port=%d\n", listenPort), localIP)
 }
 
-// NewDeviceWithBind creates a userspace WireGuard device using the provided UDP bind.
-func NewDeviceWithBind(privateKey wgtypes.Key, peerPublicKey wgtypes.Key, endpoint string, bind conn.Bind, localIP string) (*Device, error) {
-	return newDevice(privateKey, peerPublicKey, endpoint, bind, "", localIP)
-}
-
 func newDevice(privateKey wgtypes.Key, peerPublicKey wgtypes.Key, endpoint string, bind conn.Bind, listenPortConfig string, localIP string) (*Device, error) {
 	prefix, err := netip.ParsePrefix(localIP)
 	if err != nil {

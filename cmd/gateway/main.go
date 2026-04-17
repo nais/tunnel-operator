@@ -15,7 +15,6 @@ import (
 	"time"
 
 	naisiov1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
-	"github.com/nais/tunnel-operator/pkg/stun"
 	"github.com/nais/tunnel-operator/pkg/wireguard"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,10 +49,6 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	targetPortStr := requireEnv("TUNNEL_TARGET_PORT")
 	tunnelName := requireEnv("TUNNEL_NAME")
 	tunnelNamespace := requireEnv("TUNNEL_NAMESPACE")
-	stunServers := stun.DefaultSTUNServers
-	if raw := strings.TrimSpace(os.Getenv("STUN_SERVERS")); raw != "" {
-		stunServers = splitAndTrim(raw)
-	}
 
 	targetPort, err := strconv.Atoi(targetPortStr)
 	if err != nil {
@@ -72,18 +67,6 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	publicKey := privateKey.PublicKey()
 	logger.Info("generated WireGuard keypair", "publicKey", publicKey.String())
 
-	logger.Info("performing STUN discovery")
-	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: 51820})
-	if err != nil {
-		return fmt.Errorf("listen UDP: %w", err)
-	}
-	defer udpConn.Close()
-	stunEndpoint, err := stun.DiscoverEndpoint(udpConn, stunServers)
-	if err != nil {
-		return fmt.Errorf("STUN discovery failed: %w", err)
-	}
-	logger.Info("discovered STUN endpoint", "endpoint", stunEndpoint)
-
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return fmt.Errorf("get in-cluster config: %w", err)
@@ -94,18 +77,12 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	logger.Info("updating Tunnel CR status")
-	if err := updateTunnelStatus(ctx, dynClient, tunnelNamespace, tunnelName, publicKey.String(), stunEndpoint, naisiov1alpha1.TunnelPhaseReady, "Gateway ready"); err != nil {
+	if err := updateTunnelStatus(ctx, dynClient, tunnelNamespace, tunnelName, publicKey.String(), naisiov1alpha1.TunnelPhaseReady, "Gateway ready"); err != nil {
 		return fmt.Errorf("update tunnel status: %w", err)
 	}
 
-	logger.Info("waiting for client STUN endpoint")
-	clientEndpoint, err := waitForClientEndpoint(ctx, dynClient, tunnelNamespace, tunnelName, 60*time.Second)
-	if err != nil {
-		return err
-	}
-
-	logger.Info("creating WireGuard device", "listenPort", 51820, "peerEndpoint", clientEndpoint)
-	dev, err := wireguard.NewDeviceWithBind(privateKey, peerPublicKey, clientEndpoint, wireguard.NewSTUNBind(udpConn), wireguard.TunnelIPGateway)
+	logger.Info("creating WireGuard device", "listenPort", 51820)
+	dev, err := wireguard.NewDevice(privateKey, peerPublicKey, "", 51820, wireguard.TunnelIPGateway)
 	if err != nil {
 		return fmt.Errorf("create WireGuard device: %w", err)
 	}
@@ -161,7 +138,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		logger.Info("gateway shutting down")
 	case err := <-errCh:
 		if err != nil {
-			_ = updateTunnelStatus(context.Background(), dynClient, tunnelNamespace, tunnelName, publicKey.String(), stunEndpoint, naisiov1alpha1.TunnelPhaseFailed, err.Error())
+			_ = updateTunnelStatus(context.Background(), dynClient, tunnelNamespace, tunnelName, publicKey.String(), naisiov1alpha1.TunnelPhaseFailed, err.Error())
 			return err
 		}
 	case <-peerTimeoutCh:
@@ -170,40 +147,11 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
-	if err := updateTunnelStatus(shutdownCtx, dynClient, tunnelNamespace, tunnelName, publicKey.String(), stunEndpoint, naisiov1alpha1.TunnelPhaseTerminated, "Gateway terminated"); err != nil {
+	if err := updateTunnelStatus(shutdownCtx, dynClient, tunnelNamespace, tunnelName, publicKey.String(), naisiov1alpha1.TunnelPhaseTerminated, "Gateway terminated"); err != nil {
 		logger.Error("failed to update termination status", "err", err)
 	}
 
 	return nil
-}
-
-func waitForClientEndpoint(ctx context.Context, client dynamic.Interface, namespace, name string, timeout time.Duration) (string, error) {
-	deadline := time.After(timeout)
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-deadline:
-			return "", fmt.Errorf("timeout waiting for client STUN endpoint")
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-ticker.C:
-			tunnel, err := client.Resource(tunnelGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-			if err != nil {
-				return "", fmt.Errorf("get tunnel CR: %w", err)
-			}
-			spec, ok := tunnel.Object["spec"].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			endpoint, ok := spec["clientSTUNEndpoint"].(string)
-			if !ok || endpoint == "" {
-				continue
-			}
-			return endpoint, nil
-		}
-	}
 }
 
 func serveTCPProxy(ctx context.Context, listener net.Listener, targetAddr string, logger *slog.Logger, errCh chan<- error, activityCh chan<- struct{}) {
@@ -262,13 +210,12 @@ func copyAndClose(dst, src net.Conn) (int64, error) {
 	return n, err
 }
 
-func updateTunnelStatus(ctx context.Context, client dynamic.Interface, namespace, name, pubKey, stunEndpoint string, phase naisiov1alpha1.TunnelPhase, message string) error {
-	patch := map[string]interface{}{
-		"status": map[string]interface{}{
-			"phase":               string(phase),
-			"gatewayPublicKey":    pubKey,
-			"gatewaySTUNEndpoint": stunEndpoint,
-			"message":             message,
+func updateTunnelStatus(ctx context.Context, client dynamic.Interface, namespace, name, pubKey string, phase naisiov1alpha1.TunnelPhase, message string) error {
+	patch := map[string]any{
+		"status": map[string]any{
+			"phase":            string(phase),
+			"gatewayPublicKey": pubKey,
+			"message":          message,
 		},
 	}
 
@@ -299,18 +246,4 @@ func requireEnv(key string) string {
 		os.Exit(1)
 	}
 	return v
-}
-
-func splitAndTrim(raw string) []string {
-	parts := strings.Split(raw, ",")
-	servers := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			servers = append(servers, trimmed)
-		}
-	}
-	if len(servers) == 0 {
-		return stun.DefaultSTUNServers
-	}
-	return servers
 }
