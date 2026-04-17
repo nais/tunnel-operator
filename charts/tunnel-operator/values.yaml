@@ -5,6 +5,15 @@ image:
   pullPolicy: IfNotPresent
   tag: ""
 
+grpc:
+  port: 9090
+
+lbVIP: ""
+
+forwarderPortRange:
+  min: 10000
+  max: 60000
+
 gatewayImage: europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-gateway:latest
 
 serviceAccount:
@@ -30,3 +39,28 @@ staticClusters: ""
 fasit:
   tenant:
     name: ""
+
+forwarder:
+  enabled: true
+  image:
+    repository: europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-forwarder
+    pullPolicy: IfNotPresent
+    tag: ""
+  replicaCount: 2
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  hpa:
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  portRange:
+    min: 10000
+    max: 60000
+  grpcAddr: "tunnel-operator:9090"
+  healthAddr: ":8080"
+  lbVip: ""

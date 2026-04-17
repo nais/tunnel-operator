@@ -8,6 +8,7 @@
 bin/
 testbin/
 /gateway
+/forwarder
 
 # Build artifacts
 *.out

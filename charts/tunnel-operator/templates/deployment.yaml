@@ -31,6 +31,14 @@ spec:
           value: {{ .Values.fasit.tenant.name | quote }}
         - name: CLUSTERS
           value: {{ .Values.clusters | quote }}
+        - name: GRPC_ADDR
+          value: ":{{ .Values.grpc.port }}"
+        - name: LB_VIP
+          value: {{ .Values.lbVIP | quote }}
+        - name: FORWARDER_PORT_RANGE_MIN
+          value: {{ .Values.forwarderPortRange.min | quote }}
+        - name: FORWARDER_PORT_RANGE_MAX
+          value: {{ .Values.forwarderPortRange.max | quote }}
         {{- if .Values.staticClusters }}
         - name: STATIC_CLUSTERS
           valueFrom:
@@ -44,6 +52,9 @@ spec:
           protocol: TCP
         - name: health
           containerPort: 8081
+          protocol: TCP
+        - name: grpc
+          containerPort: {{ .Values.grpc.port }}
           protocol: TCP
         livenessProbe:
           httpGet:
