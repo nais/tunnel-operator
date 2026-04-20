@@ -32,9 +32,11 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    {{- if .Values.apiServer.address }}
     - to:
         - ipBlock:
             cidr: {{ .Values.apiServer.address }}
       ports:
         - protocol: TCP
           port: 443
+    {{- end }}
