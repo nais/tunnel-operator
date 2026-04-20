@@ -51,6 +51,10 @@ run = "buf generate"
 description = "Build docker image"
 run = "docker build -t ${IMG:-tunnel-operator:latest} ."
 
+[tasks."docker:build-forwarder"]
+description = "Build forwarder docker image"
+run = "docker build -t ${FORWARDER_IMG:-tunnel-operator-forwarder:latest} -f cmd/forwarder/Dockerfile ."
+
 [tasks."docker:build-gateway"]
 description = "Build gateway docker image"
 run = "docker build -t ${GATEWAY_IMG:-tunnel-operator-gateway:latest} -f cmd/gateway/Dockerfile ."

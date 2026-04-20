@@ -5,6 +5,8 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o forwarder ./cmd/forwarder/
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM scratch
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /build/forwarder /forwarder
+USER 65532:65532
 ENTRYPOINT ["/forwarder"]
