@@ -42,11 +42,20 @@ type netstackView struct {
 // endpoint: the other peer's UDP endpoint (ip:port)
 // listenPort: local UDP port to listen on (0 for OS-assigned)
 // localIP: the tunnel IP for this peer (e.g., TunnelIPClient or TunnelIPGateway)
-func NewDevice(privateKey wgtypes.Key, peerPublicKey wgtypes.Key, endpoint string, listenPort int, localIP string) (*Device, error) {
-	return newDevice(privateKey, peerPublicKey, endpoint, conn.NewDefaultBind(), fmt.Sprintf("listen_port=%d\n", listenPort), localIP)
+func NewDevice(
+	privateKey wgtypes.Key, peerPublicKey wgtypes.Key,
+	endpoint string, listenPort int, localIP string,
+) (*Device, error) {
+	return newDevice(
+		privateKey, peerPublicKey, endpoint,
+		conn.NewDefaultBind(), fmt.Sprintf("listen_port=%d\n", listenPort), localIP,
+	)
 }
 
-func newDevice(privateKey wgtypes.Key, peerPublicKey wgtypes.Key, endpoint string, bind conn.Bind, listenPortConfig string, localIP string) (*Device, error) {
+func newDevice(
+	privateKey wgtypes.Key, peerPublicKey wgtypes.Key,
+	endpoint string, bind conn.Bind, listenPortConfig string, localIP string,
+) (*Device, error) {
 	prefix, err := netip.ParsePrefix(localIP)
 	if err != nil {
 		return nil, fmt.Errorf("parse local IP %q: %w", localIP, err)

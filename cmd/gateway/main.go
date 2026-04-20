@@ -95,7 +95,11 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	logger.Info("updating Tunnel CR status")
-	if err := updateTunnelStatus(ctx, dynClient, tunnelNamespace, tunnelName, publicKey.String(), naisiov1alpha1.TunnelPhaseReady, "Gateway ready"); err != nil {
+	err = updateTunnelStatus(
+		ctx, dynClient, tunnelNamespace, tunnelName,
+		publicKey.String(), naisiov1alpha1.TunnelPhaseReady, "Gateway ready",
+	)
+	if err != nil {
 		return fmt.Errorf("update tunnel status: %w", err)
 	}
 
@@ -114,7 +118,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("listen TCP on netstack: %w", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	errCh := make(chan error, 1)
 	activityCh := make(chan struct{}, 1)
@@ -156,7 +160,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		logger.Info("gateway shutting down")
 	case err := <-errCh:
 		if err != nil {
-			_ = updateTunnelStatus(context.Background(), dynClient, tunnelNamespace, tunnelName, publicKey.String(), naisiov1alpha1.TunnelPhaseFailed, err.Error())
+			_ = updateTunnelStatus(
+				context.Background(), dynClient, tunnelNamespace, tunnelName,
+				publicKey.String(), naisiov1alpha1.TunnelPhaseFailed, err.Error(),
+			)
 			return err
 		}
 	case <-peerTimeoutCh:
@@ -165,14 +172,21 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
-	if err := updateTunnelStatus(shutdownCtx, dynClient, tunnelNamespace, tunnelName, publicKey.String(), naisiov1alpha1.TunnelPhaseTerminated, "Gateway terminated"); err != nil {
+	err = updateTunnelStatus(
+		shutdownCtx, dynClient, tunnelNamespace, tunnelName,
+		publicKey.String(), naisiov1alpha1.TunnelPhaseTerminated, "Gateway terminated",
+	)
+	if err != nil {
 		logger.Error("failed to update termination status", "err", err)
 	}
 
 	return nil
 }
 
-func serveTCPProxy(ctx context.Context, listener net.Listener, targetAddr string, logger *slog.Logger, errCh chan<- error, activityCh chan<- struct{}, m *gatewayMetrics) {
+func serveTCPProxy(
+	ctx context.Context, listener net.Listener, targetAddr string,
+	logger *slog.Logger, errCh chan<- error, activityCh chan<- struct{}, m *gatewayMetrics,
+) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -198,7 +212,7 @@ func serveTCPProxy(ctx context.Context, listener net.Listener, targetAddr string
 }
 
 func handleConn(src net.Conn, targetAddr string, logger *slog.Logger, m *gatewayMetrics) {
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	m.tcpConnectionsTotal.Inc()
 	m.tcpConnectionsActive.Inc()
@@ -209,7 +223,7 @@ func handleConn(src net.Conn, targetAddr string, logger *slog.Logger, m *gateway
 		logger.Error("dial target", "addr", targetAddr, "err", err)
 		return
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	done := make(chan struct{}, 2)
 	go func() {
@@ -234,7 +248,10 @@ func copyAndClose(dst, src net.Conn) (int64, error) {
 	return n, err
 }
 
-func updateTunnelStatus(ctx context.Context, client dynamic.Interface, namespace, name, pubKey string, phase naisiov1alpha1.TunnelPhase, message string) error {
+func updateTunnelStatus(
+	ctx context.Context, client dynamic.Interface,
+	namespace, name, pubKey string, phase naisiov1alpha1.TunnelPhase, message string,
+) error {
 	patch := map[string]any{
 		"status": map[string]any{
 			"phase":            string(phase),

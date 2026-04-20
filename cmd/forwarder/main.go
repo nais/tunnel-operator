@@ -107,7 +107,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
-func connectAndFetchConfig(ctx context.Context, configClient *forwarder.ConfigClient, operatorAddr string, logger *slog.Logger) (*forwarderv1.ForwarderConfig, error) {
+func connectAndFetchConfig(
+	ctx context.Context, configClient *forwarder.ConfigClient,
+	operatorAddr string, logger *slog.Logger,
+) (*forwarderv1.ForwarderConfig, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -149,7 +152,8 @@ func applyMappings(ctx context.Context, proxy *forwarder.UDPProxy, mappings []*f
 			continue
 		}
 
-		if err := proxy.AddMapping(ctx, port, gatewayAddr, mapping.GetTunnelName(), mapping.GetTunnelNamespace()); err != nil {
+		err := proxy.AddMapping(ctx, port, gatewayAddr, mapping.GetTunnelName(), mapping.GetTunnelNamespace())
+		if err != nil {
 			return fmt.Errorf("add mapping for port %d: %w", port, err)
 		}
 	}
@@ -157,7 +161,10 @@ func applyMappings(ctx context.Context, proxy *forwarder.UDPProxy, mappings []*f
 	return nil
 }
 
-func handleUpdate(ctx context.Context, proxy *forwarder.UDPProxy, logger *slog.Logger, update *forwarderv1.TunnelUpdate) {
+func handleUpdate(
+	ctx context.Context, proxy *forwarder.UDPProxy,
+	logger *slog.Logger, update *forwarderv1.TunnelUpdate,
+) {
 	if update == nil || update.GetTunnel() == nil {
 		logger.Warn("ignoring invalid tunnel update")
 		return
@@ -178,8 +185,11 @@ func handleUpdate(ctx context.Context, proxy *forwarder.UDPProxy, logger *slog.L
 			return
 		}
 
-		if err := proxy.AddMapping(ctx, port, gatewayAddr, mapping.GetTunnelName(), mapping.GetTunnelNamespace()); err != nil {
-			logger.Error("failed to apply tunnel update", "port", port, "gatewayAddr", gatewayAddr, "type", update.GetType().String(), "err", err)
+		err := proxy.AddMapping(ctx, port, gatewayAddr, mapping.GetTunnelName(), mapping.GetTunnelNamespace())
+		if err != nil {
+			logger.Error("failed to apply tunnel update",
+				"port", port, "gatewayAddr", gatewayAddr,
+				"type", update.GetType().String(), "err", err)
 			return
 		}
 

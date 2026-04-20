@@ -16,7 +16,7 @@ func TestHealthServerHealthz(t *testing.T) {
 	defer cancel()
 
 	resp := httpGet(t, baseURL+"/healthz")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected status: got %d want %d", resp.StatusCode, http.StatusOK)
@@ -30,7 +30,7 @@ func TestHealthServerReadyz(t *testing.T) {
 	defer cancel()
 
 	resp := httpGet(t, baseURL+"/readyz")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("unexpected initial status: got %d want %d", resp.StatusCode, http.StatusServiceUnavailable)
@@ -39,7 +39,7 @@ func TestHealthServerReadyz(t *testing.T) {
 	server.SetReady(true)
 
 	resp = httpGet(t, baseURL+"/readyz")
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected ready status: got %d want %d", resp.StatusCode, http.StatusOK)

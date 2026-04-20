@@ -115,7 +115,7 @@ func (s *ForwarderServer) Start(ctx context.Context, addr string) error {
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", addr, err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	server := gogrpc.NewServer()
 	forwarderv1.RegisterForwarderConfigServiceServer(server, s)
