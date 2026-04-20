@@ -38,3 +38,10 @@ values:
     computed:
       template: |
         {{ .Env.tunnel_operator_name | quote }}
+
+  apiServer.address:
+    displayName: API server CIDR
+    description: Kubernetes API server address as CIDR (e.g. 10.0.0.1/32)
+    computed:
+      template: |
+        {{ .Env.apiserver_endpoint }}/32

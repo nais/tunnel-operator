@@ -12,6 +12,9 @@ forwarderPortRange:
   min: 10000
   max: 60000
 
+apiServer:
+  address: ""
+
 gatewayImage: europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-gateway:latest
 
 serviceAccount:
