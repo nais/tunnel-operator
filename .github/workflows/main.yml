@@ -91,12 +91,40 @@ jobs:
     outputs:
       version: "${{ steps.build-push-sign.outputs.version }}"
 
+  build-forwarder:
+    name: Build and push forwarder image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # ratchet:actions/checkout@v5
+      - name: Install cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # ratchet:sigstore/cosign-installer@v4.0.0
+        with:
+          cosign-release: "v2.2.3"
+      - name: Verify runner image
+        run: cosign verify --certificate-identity keyless@distroless.iam.gserviceaccount.com --certificate-oidc-issuer https://accounts.google.com gcr.io/distroless/static-debian11
+      - uses: nais/platform-build-push-sign@main # ratchet:exclude
+        id: build-push-sign
+        with:
+          name: tunnel-operator-forwarder
+          google_service_account: gh-tunnel-operator
+          dockerfile: cmd/forwarder/Dockerfile
+          push: ${{ github.actor != 'dependabot[bot]' }}
+          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
+          cache_from: type=gha
+          cache_to: type=gha,mode=max
+    outputs:
+      version: "${{ steps.build-push-sign.outputs.version }}"
+
   test-chart:
     name: Test chart / deploy
     runs-on: ubuntu-latest
     needs:
       - build
       - build-gateway
+      - build-forwarder
     steps:
       - name: Clone the code
         uses: actions/checkout@v5
@@ -111,6 +139,7 @@ jobs:
             if [ -f "${chart}/values.yaml" ] && yq e '.image' "${chart}/values.yaml" | grep -qv '^null$'; then
               yq e '.image.tag = "${{ needs.build.outputs.version }}"' --inplace "${chart}/values.yaml"
               yq e '.gatewayImage = "europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-gateway:${{ needs.build-gateway.outputs.version }}"' --inplace "${chart}/values.yaml"
+              yq e '.forwarder.image.tag = "${{ needs.build-forwarder.outputs.version }}"' --inplace "${chart}/values.yaml"
             fi
           done
       - name: Lint Helm Charts
@@ -147,6 +176,7 @@ jobs:
     needs:
       - build
       - build-gateway
+      - build-forwarder
       - test-chart
     steps:
       - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # ratchet:actions/checkout@v5
@@ -175,6 +205,7 @@ jobs:
             if [ -f "${chart}/values.yaml" ] && yq e '.image' "${chart}/values.yaml" | grep -qv '^null$'; then
               yq e '.image.tag = "${{ needs.build.outputs.version }}"' --inplace "${chart}/values.yaml"
               yq e '.gatewayImage = "europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-gateway:${{ needs.build-gateway.outputs.version }}"' --inplace "${chart}/values.yaml"
+              yq e '.forwarder.image.tag = "${{ needs.build-forwarder.outputs.version }}"' --inplace "${chart}/values.yaml"
             fi
           done
       - name: Build Charts
@@ -195,6 +226,7 @@ jobs:
     needs:
       - build
       - build-gateway
+      - build-forwarder
       - chart
       - test-chart
       - test
@@ -218,6 +250,7 @@ jobs:
     needs:
       - build
       - build-gateway
+      - build-forwarder
       - chart
       - test-chart
       - test
