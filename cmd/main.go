@@ -83,14 +83,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := ctrl.SetupSignalHandler()
-	go func() {
-		if err := grpcServer.Start(ctx, grpcAddr); err != nil {
-			slog.Error("problem running grpc server", "error", err, "addr", grpcAddr)
-		}
-	}()
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		return grpcServer.Start(ctx, grpcAddr)
+	})); err != nil {
+		slog.Error("unable to add grpc server to manager", "error", err)
+		os.Exit(1)
+	}
 
 	slog.Info("starting manager", "grpc_addr", grpcAddr)
+	ctx := ctrl.SetupSignalHandler()
 	if err := mgr.Start(ctx); err != nil {
 		slog.Error("problem running manager", "error", err)
 		os.Exit(1)
