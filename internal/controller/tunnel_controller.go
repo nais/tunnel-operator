@@ -17,7 +17,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/utils/ptr"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -152,7 +151,8 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			RestartPolicy:         corev1.RestartPolicyNever,
 			ActiveDeadlineSeconds: &deadlineSeconds,
 			SecurityContext: &corev1.PodSecurityContext{
-				RunAsNonRoot: new(bool),
+				RunAsNonRoot: new(true),
+				RunAsUser:    new(int64(65532)),
 				SeccompProfile: &corev1.SeccompProfile{
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
@@ -173,8 +173,10 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 					{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
 				},
 				SecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: new(bool),
-					RunAsNonRoot:             new(bool),
+					AllowPrivilegeEscalation: new(false),
+					RunAsNonRoot:             new(true),
+					RunAsUser:                new(int64(65532)),
+					ReadOnlyRootFilesystem:   new(true),
 					SeccompProfile: &corev1.SeccompProfile{
 						Type: corev1.SeccompProfileTypeRuntimeDefault,
 					},
@@ -204,12 +206,12 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 					}},
 					Ports: []networkingv1.NetworkPolicyPort{{
 						Port:     intstrPtr(tunnel.Spec.Target.Port),
-						Protocol: ptr.To(corev1.ProtocolTCP),
+						Protocol: new(corev1.ProtocolTCP),
 					}},
 				},
 				{
 					Ports: []networkingv1.NetworkPolicyPort{{
-						Protocol: ptr.To(corev1.ProtocolUDP),
+						Protocol: new(corev1.ProtocolUDP),
 					}},
 				},
 			},
