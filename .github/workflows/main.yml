@@ -110,10 +110,6 @@ jobs:
   test-chart:
     name: Test chart / deploy
     runs-on: ubuntu-latest
-    needs:
-      - build
-      - build-gateway
-      - build-forwarder
     steps:
       - name: Clone the code
         uses: actions/checkout@v5
@@ -121,36 +117,76 @@ jobs:
         name: "Setup Helm"
         with:
           version: "3.8.0"
-      - name: Set versions
-        run: |-
-          for chart in charts/*; do
-            yq e '.version = "${{ needs.build.outputs.version }}"' --inplace "${chart}/Chart.yaml"
-            if [ -f "${chart}/values.yaml" ] && yq e '.image' "${chart}/values.yaml" | grep -qv '^null$'; then
-              yq e '.image.tag = "${{ needs.build.outputs.version }}"' --inplace "${chart}/values.yaml"
-              yq e '.gatewayImage = "europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-gateway:${{ needs.build-gateway.outputs.version }}"' --inplace "${chart}/values.yaml"
-              yq e '.forwarder.image.tag = "${{ needs.build-forwarder.outputs.version }}"' --inplace "${chart}/values.yaml"
-            fi
-          done
+      - name: Build images
+        run: |
+          docker build -t tunnel-operator:ci .
+          docker build -t tunnel-operator-gateway:ci -f cmd/gateway/Dockerfile .
+          docker build -t tunnel-operator-forwarder:ci -f cmd/forwarder/Dockerfile .
+      - name: Create kind cluster
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind create cluster
+      - name: Load images into kind
+        run: |
+          kind load docker-image tunnel-operator:ci
+          kind load docker-image tunnel-operator-gateway:ci
+          kind load docker-image tunnel-operator-forwarder:ci
       - name: Lint Helm Charts
         run: |
           for chart in charts/*; do
             helm lint "${chart}"
           done
-      - name: Install the latest version of kind
-        run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-      - name: Verify kind installation
-        run: kind version
-      - name: Create kind cluster
-        run: kind create cluster
       - name: Install operator chart
         run: |
-          helm install tunnel-operator ./charts/tunnel-operator --create-namespace --namespace tunnel-operator-system
-      - name: Check Helm release status
+          helm install tunnel-operator ./charts/tunnel-operator \
+            --create-namespace --namespace tunnel-operator-system \
+            --set image.repository=tunnel-operator \
+            --set image.tag=ci \
+            --set image.pullPolicy=Never \
+            --set gatewayImage=tunnel-operator-gateway:ci \
+            --set forwarder.image.repository=tunnel-operator-forwarder \
+            --set forwarder.image.tag=ci \
+            --set forwarder.image.pullPolicy=Never
+      - name: Wait for operator
         run: |
-          helm status tunnel-operator --namespace tunnel-operator-system
+          kubectl -n tunnel-operator-system rollout status deployment/tunnel-operator --timeout=60s
+      - name: Wait for forwarder
+        run: |
+          kubectl -n tunnel-operator-system rollout status deployment/tunnel-operator-forwarder --timeout=90s
+      - name: Deploy test tunnel
+        run: |
+          kubectl create namespace test-team
+          kubectl apply -f - <<'EOF'
+          apiVersion: nais.io/v1alpha1
+          kind: Tunnel
+          metadata:
+            name: test-tunnel
+            namespace: test-team
+          spec:
+            teamSlug: test-team
+            environment: ci
+            clientPublicKey: "dGVzdC1wdWJsaWMta2V5LWJhc2U2NC1lbmNvZGVkMQ=="
+            target:
+              host: test-db.example.com
+              port: 5432
+              resolvedIP: "10.0.0.1"
+          EOF
+      - name: Verify gateway pod created
+        run: |
+          for i in $(seq 1 30); do
+            if kubectl -n test-team get pod tunnel-gateway-test-tunnel &>/dev/null; then
+              echo "Gateway pod created"
+              kubectl -n test-team get pod tunnel-gateway-test-tunnel
+              exit 0
+            fi
+            echo "Waiting for gateway pod... ($i/30)"
+            sleep 2
+          done
+          echo "Gateway pod not created within 60s"
+          kubectl -n tunnel-operator-system logs deployment/tunnel-operator --tail=50
+          exit 1
 
   chart:
     permissions:
