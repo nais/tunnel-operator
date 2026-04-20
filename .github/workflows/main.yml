@@ -173,18 +173,39 @@ jobs:
               port: 5432
               resolvedIP: "10.0.0.1"
           EOF
-      - name: Verify gateway pod created
+      - name: Verify gateway pod running
         run: |
-          for i in $(seq 1 30); do
-            if kubectl -n test-team get pod tunnel-gateway-test-tunnel &>/dev/null; then
-              echo "Gateway pod created"
-              kubectl -n test-team get pod tunnel-gateway-test-tunnel
-              exit 0
-            fi
-            echo "Waiting for gateway pod... ($i/30)"
+          for i in $(seq 1 60); do
+            phase=$(kubectl -n test-team get pod tunnel-gateway-test-tunnel -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+            case "$phase" in
+              Running)
+                echo "Gateway pod running"
+                kubectl -n test-team get pod tunnel-gateway-test-tunnel
+                exit 0
+                ;;
+              Failed|Error)
+                echo "Gateway pod failed (phase=$phase)"
+                kubectl -n test-team describe pod tunnel-gateway-test-tunnel
+                echo "--- Gateway logs ---"
+                kubectl -n test-team logs tunnel-gateway-test-tunnel || true
+                echo "--- Operator logs ---"
+                kubectl -n tunnel-operator-system logs deployment/tunnel-operator --tail=50
+                exit 1
+                ;;
+              NotFound)
+                echo "Waiting for gateway pod... ($i/60)"
+                ;;
+              *)
+                echo "Gateway pod phase: $phase ($i/60)"
+                ;;
+            esac
             sleep 2
           done
-          echo "Gateway pod not created within 60s"
+          echo "Gateway pod not running within 120s"
+          kubectl -n test-team describe pod tunnel-gateway-test-tunnel || true
+          echo "--- Gateway logs ---"
+          kubectl -n test-team logs tunnel-gateway-test-tunnel || true
+          echo "--- Operator logs ---"
           kubectl -n tunnel-operator-system logs deployment/tunnel-operator --tail=50
           exit 1
 
