@@ -167,7 +167,7 @@ jobs:
           spec:
             teamSlug: test-team
             environment: ci
-            clientPublicKey: "dGVzdC1wdWJsaWMta2V5LWJhc2U2NC1lbmNvZGVkMQ=="
+            clientPublicKey: "hwRGgheoULX8J3BkNVTyZTw79iOZol4FUPc3iSxV4Zw="
             target:
               host: test-db.example.com
               port: 5432
