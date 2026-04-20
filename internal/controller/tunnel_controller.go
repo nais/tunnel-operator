@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -139,7 +140,10 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 	}
 
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, pod, func() error {
+	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("getting gateway pod: %w", err)
+		}
 		pod.Labels = labels
 		pod.Annotations = map[string]string{
 			"prometheus.io/scrape": "true",
@@ -186,9 +190,12 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 				},
 			}},
 		}
-		return controllerutil.SetControllerReference(tunnel, pod, r.Scheme)
-	}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconciling pod: %w", err)
+		if err := controllerutil.SetControllerReference(tunnel, pod, r.Scheme); err != nil {
+			return ctrl.Result{}, fmt.Errorf("setting owner reference on pod: %w", err)
+		}
+		if err := r.Client.Create(ctx, pod); err != nil {
+			return ctrl.Result{}, fmt.Errorf("creating gateway pod: %w", err)
+		}
 	}
 
 	networkPolicy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
