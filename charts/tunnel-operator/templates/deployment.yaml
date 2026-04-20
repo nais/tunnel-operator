@@ -27,10 +27,6 @@ spec:
         env:
         - name: GATEWAY_IMAGE
           value: {{ .Values.gatewayImage | quote }}
-        - name: TENANT_NAME
-          value: {{ .Values.fasit.tenant.name | quote }}
-        - name: CLUSTERS
-          value: {{ .Values.clusters | quote }}
         - name: GRPC_ADDR
           value: ":{{ .Values.grpc.port }}"
         - name: FORWARDER_SERVICE_NAME
@@ -43,13 +39,6 @@ spec:
           value: {{ .Values.forwarderPortRange.min | quote }}
         - name: FORWARDER_PORT_RANGE_MAX
           value: {{ .Values.forwarderPortRange.max | quote }}
-        {{- if .Values.staticClusters }}
-        - name: STATIC_CLUSTERS
-          valueFrom:
-            secretKeyRef:
-              name: {{ include "tunnel-operator.fullname" . }}
-              key: static-clusters
-        {{- end }}
         ports:
         - name: metrics
           containerPort: 8080

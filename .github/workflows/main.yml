@@ -156,15 +156,11 @@ jobs:
         run: kind version
       - name: Create kind cluster
         run: kind create cluster
-      - name: Install tenant chart (CRD + RBAC)
-        run: |
-          helm install tunnel-operator-tenant ./charts/tunnel-operator-tenant --create-namespace --namespace tunnel-operator-system --set serviceAccountEmail=test@example.iam.gserviceaccount.com
       - name: Install operator chart
         run: |
           helm install tunnel-operator ./charts/tunnel-operator --create-namespace --namespace tunnel-operator-system
       - name: Check Helm release status
         run: |
-          helm status tunnel-operator-tenant --namespace tunnel-operator-system
           helm status tunnel-operator --namespace tunnel-operator-system
 
   chart:
@@ -220,8 +216,8 @@ jobs:
             helm push "$chart" oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature
           done
 
-  rollout-tenant:
-    name: Rollout tenant
+  rollout:
+    name: Rollout
     if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
     needs:
       - build
@@ -231,31 +227,6 @@ jobs:
       - test-chart
       - test
       - lint
-    runs-on: fasit-deploy
-    permissions:
-      id-token: write
-    steps:
-      - uses: nais/fasit-deploy@v3 # ratchet:exclude
-        if: github.ref == 'refs/heads/main'
-        with:
-          chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator-tenant
-          version: ${{ needs.build.outputs.version }}
-          skip-ci: true
-          target: |
-            {"kind": "tenant", "tenant": "dev-nais"}
-
-  rollout-operator:
-    name: Rollout operator
-    if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
-    needs:
-      - build
-      - build-gateway
-      - build-forwarder
-      - chart
-      - test-chart
-      - test
-      - lint
-      - rollout-tenant
     runs-on: fasit-deploy
     permissions:
       id-token: write
@@ -267,4 +238,4 @@ jobs:
           version: ${{ needs.build.outputs.version }}
           skip-ci: true
           target: |
-            {"kind": "management", "tenant": "dev-nais"}
+            {"kind": "tenant", "tenant": "dev-nais"}

@@ -1,5 +1,5 @@
 environmentKinds:
-  - management
+  - tenant
 
 values:
   replicaCount:
@@ -38,20 +38,3 @@ values:
     computed:
       template: |
         {{ .Env.tunnel_operator_name | quote }}
-
-  clusters:
-    displayName: Tenant clusters
-    description: Comma-separated list of tenant cluster names
-    config:
-      type: string
-    computed:
-      template: |
-        {{- $tenantEnvs := filter "kind" "tenant" .Envs -}}
-        {{ eachOf $tenantEnvs "name" | sortAlpha | join "," }}
-
-  staticClusters:
-    displayName: Static clusters
-    description: Comma-separated list of clusters with static credentials on the format 'name|apiserverHost|token'
-    config:
-      type: string
-      secret: true

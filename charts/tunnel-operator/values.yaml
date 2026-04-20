@@ -27,17 +27,6 @@ resources:
     cpu: 50m
     memory: 64Mi
 
-tenant:
-  domain: example.com
-
-clusters: ""
-
-staticClusters: ""
-
-fasit:
-  tenant:
-    name: ""
-
 forwarder:
   enabled: true
   image:

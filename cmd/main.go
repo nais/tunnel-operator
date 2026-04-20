@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/go-logr/logr"
 	operatorgrpc "github.com/nais/tunnel-operator/internal/grpc"
@@ -12,19 +11,16 @@ import (
 
 	naisiov1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
 	"github.com/nais/tunnel-operator/internal/controller"
-	"github.com/nais/tunnel-operator/internal/provider"
 	"github.com/nais/tunnel-operator/pkg/portalloc"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	crcluster "sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -40,9 +36,6 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	crlog.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
 
-	tenantName := os.Getenv("TENANT_NAME")
-	clusterNames := os.Getenv("CLUSTERS")
-	staticClustersRaw := os.Getenv("STATIC_CLUSTERS")
 	grpcAddr := os.Getenv("GRPC_ADDR")
 	if grpcAddr == "" {
 		grpcAddr = ":9090"
@@ -50,30 +43,7 @@ func main() {
 	forwarderServiceName := os.Getenv("FORWARDER_SERVICE_NAME")
 	podNamespace := os.Getenv("POD_NAMESPACE")
 
-	var clusters []string
-	if clusterNames != "" {
-		clusters = strings.Split(clusterNames, ",")
-	}
-
-	staticClusters, err := provider.ParseStaticClusters(staticClustersRaw)
-	if err != nil {
-		slog.Error("unable to parse static clusters", "error", err)
-		os.Exit(1)
-	}
-
-	clusterConfigs, err := provider.CreateClusterConfigMap(tenantName, clusters, staticClusters)
-	if err != nil {
-		slog.Error("unable to create cluster configs", "error", err)
-		os.Exit(1)
-	}
-
-	slog.Info("configured clusters", "count", len(clusterConfigs))
-
-	staticProvider := provider.NewStatic(clusterConfigs, func(o *crcluster.Options) {
-		o.Scheme = scheme
-	})
-
-	mgr, err := mcmanager.New(ctrl.GetConfigOrDie(), staticProvider, manager.Options{
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), manager.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: ":8080",
@@ -86,18 +56,17 @@ func main() {
 		slog.Error("unable to create manager", "error", err)
 		os.Exit(1)
 	}
-	localMgr := mgr.GetLocalManager()
 
 	allocator := portalloc.New(10000, 60000)
 	forwarderServiceKey := client.ObjectKey{Name: forwarderServiceName, Namespace: podNamespace}
-	grpcServer := operatorgrpc.NewForwarderServer(localMgr.GetClient(), allocator, forwarderServiceKey)
-	loadExistingAllocations(context.Background(), localMgr.GetAPIReader(), allocator)
+	grpcServer := operatorgrpc.NewForwarderServer(mgr.GetClient(), allocator, forwarderServiceKey)
+	loadExistingAllocations(context.Background(), mgr.GetAPIReader(), allocator)
 
 	if err := (&controller.TunnelReconciler{
+		Client:              mgr.GetClient(),
 		Scheme:              scheme,
 		PortAllocator:       allocator,
 		ForwarderServer:     grpcServer,
-		LocalClient:         localMgr.GetClient(),
 		ForwarderServiceKey: forwarderServiceKey,
 	}).SetupWithManager(mgr); err != nil {
 		slog.Error("unable to create controller", "controller", "Tunnel", "error", err)

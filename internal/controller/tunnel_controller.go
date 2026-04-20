@@ -21,29 +21,17 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
-	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
-	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
-	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 )
 
 const finalizerName = "tunnels.nais.io/cleanup"
 
-// ClusterProvider returns a cluster.Cluster for a given cluster name.
-// mcmanager.Manager satisfies this interface.
-type ClusterProvider interface {
-	GetCluster(ctx context.Context, clusterName multicluster.ClusterName) (cluster.Cluster, error)
-}
-
 type TunnelReconciler struct {
-	ClusterProvider     ClusterProvider
+	Client              client.Client
 	Scheme              *runtime.Scheme
 	PortAllocator       *portalloc.PortAllocator
 	ForwarderServer     *operatorgrpc.ForwarderServer
-	LocalClient         client.Client
 	ForwarderServiceKey client.ObjectKey
 }
 
@@ -56,7 +44,7 @@ type TunnelReconciler struct {
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
 
-func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (result ctrl.Result, retErr error) {
+func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
 	defer func() {
 		if retErr != nil {
 			reconciliationsTotal.WithLabelValues("error").Inc()
@@ -65,59 +53,31 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 		}
 	}()
 
-	logger := log.FromContext(ctx).WithValues("cluster", req.ClusterName)
-
-	cl, err := r.ClusterProvider.GetCluster(ctx, req.ClusterName)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("getting cluster %s: %w", req.ClusterName, err)
-	}
-	clusterClient := cl.GetClient()
+	logger := log.FromContext(ctx)
 
 	tunnel := &v1alpha1.Tunnel{}
-	if err := clusterClient.Get(ctx, req.NamespacedName, tunnel); err != nil {
+	if err := r.Client.Get(ctx, req.NamespacedName, tunnel); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	if !tunnel.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, clusterClient, tunnel)
+		if err := r.handleDeletion(ctx, tunnel); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if tunnel.Status.Phase == v1alpha1.TunnelPhaseTerminated {
 		logger.Info("cleaning up terminated tunnel", "tunnel", req.NamespacedName)
-
-		resourceName := gatewayResourceName(tunnel.Name)
-		objects := []client.Object{
-			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
-			&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
-			&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
-			&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
-			&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
-		}
-		for _, obj := range objects {
-			if err := client.IgnoreNotFound(clusterClient.Delete(ctx, obj)); err != nil {
-				return ctrl.Result{}, fmt.Errorf("deleting %T: %w", obj, err)
-			}
-		}
-
-		if controllerutil.ContainsFinalizer(tunnel, finalizerName) {
-			controllerutil.RemoveFinalizer(tunnel, finalizerName)
-			if err := clusterClient.Update(ctx, tunnel); err != nil {
-				return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
-			}
-		}
-
-		r.releaseForwarderPort(tunnel)
-		r.notifyTunnelUpdate(ctx, clusterClient, tunnel, forwarderv1.UpdateType_DELETED)
-
-		if err := clusterClient.Delete(ctx, tunnel); err != nil {
-			return ctrl.Result{}, client.IgnoreNotFound(err)
+		if err := r.handleTerminated(ctx, tunnel); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
 
 	if !controllerutil.ContainsFinalizer(tunnel, finalizerName) {
 		controllerutil.AddFinalizer(tunnel, finalizerName)
-		return ctrl.Result{}, clusterClient.Update(ctx, tunnel)
+		return ctrl.Result{}, r.Client.Update(ctx, tunnel)
 	}
 
 	resourceName := gatewayResourceName(tunnel.Name)
@@ -134,7 +94,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 	}
 
 	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, sa, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
 		sa.Labels = labels
 		return controllerutil.SetControllerReference(tunnel, sa, r.Scheme)
 	}); err != nil {
@@ -142,7 +102,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 	}
 
 	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, role, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, role, func() error {
 		role.Labels = labels
 		role.Rules = []rbacv1.PolicyRule{
 			{
@@ -162,7 +122,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 	}
 
 	roleBinding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, roleBinding, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, roleBinding, func() error {
 		roleBinding.Labels = labels
 		roleBinding.RoleRef = rbacv1.RoleRef{
 			APIGroup: rbacv1.GroupName,
@@ -180,7 +140,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 	}
 
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, pod, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, pod, func() error {
 		pod.Labels = labels
 		pod.Annotations = map[string]string{
 			"prometheus.io/scrape": "true",
@@ -192,7 +152,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 			RestartPolicy:         corev1.RestartPolicyNever,
 			ActiveDeadlineSeconds: &deadlineSeconds,
 			SecurityContext: &corev1.PodSecurityContext{
-				RunAsNonRoot: new(true),
+				RunAsNonRoot: new(bool),
 				SeccompProfile: &corev1.SeccompProfile{
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
@@ -213,8 +173,8 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 					{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
 				},
 				SecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: new(false),
-					RunAsNonRoot:             new(true),
+					AllowPrivilegeEscalation: new(bool),
+					RunAsNonRoot:             new(bool),
 					SeccompProfile: &corev1.SeccompProfile{
 						Type: corev1.SeccompProfileTypeRuntimeDefault,
 					},
@@ -230,7 +190,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 	}
 
 	networkPolicy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, clusterClient, networkPolicy, func() error {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, networkPolicy, func() error {
 		networkPolicy.Labels = labels
 		networkPolicy.Spec = networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{
@@ -294,11 +254,11 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 		}
 	}
 	if updated {
-		if err := clusterClient.Status().Update(ctx, tunnel); err != nil {
+		if err := r.Client.Status().Update(ctx, tunnel); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating tunnel status: %w", err)
 		}
 		tunnelsActive.WithLabelValues(string(tunnel.Status.Phase), tunnel.Namespace).Inc()
-		r.notifyTunnelUpdate(ctx, clusterClient, tunnel, updateType)
+		r.notifyTunnelUpdate(ctx, tunnel, updateType)
 	}
 
 	logger.Info("reconciled tunnel", "tunnel", req.NamespacedName, "pod", resourceName)
@@ -306,12 +266,46 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 	return ctrl.Result{}, nil
 }
 
-func (r *TunnelReconciler) handleDeletion(ctx context.Context, clusterClient client.Client, tunnel *v1alpha1.Tunnel) (ctrl.Result, error) {
+func (r *TunnelReconciler) handleDeletion(ctx context.Context, tunnel *v1alpha1.Tunnel) error {
 	if !controllerutil.ContainsFinalizer(tunnel, finalizerName) {
 		r.releaseForwarderPort(tunnel)
-		return ctrl.Result{}, nil
+		return nil
 	}
 
+	if err := r.deleteGatewayResources(ctx, tunnel); err != nil {
+		return err
+	}
+
+	controllerutil.RemoveFinalizer(tunnel, finalizerName)
+	if err := r.Client.Update(ctx, tunnel); err != nil {
+		return fmt.Errorf("removing finalizer: %w", err)
+	}
+
+	r.releaseForwarderPort(tunnel)
+	r.notifyTunnelUpdate(ctx, tunnel, forwarderv1.UpdateType_DELETED)
+
+	return nil
+}
+
+func (r *TunnelReconciler) handleTerminated(ctx context.Context, tunnel *v1alpha1.Tunnel) error {
+	if err := r.deleteGatewayResources(ctx, tunnel); err != nil {
+		return err
+	}
+
+	if controllerutil.ContainsFinalizer(tunnel, finalizerName) {
+		controllerutil.RemoveFinalizer(tunnel, finalizerName)
+		if err := r.Client.Update(ctx, tunnel); err != nil {
+			return fmt.Errorf("removing finalizer: %w", err)
+		}
+	}
+
+	r.releaseForwarderPort(tunnel)
+	r.notifyTunnelUpdate(ctx, tunnel, forwarderv1.UpdateType_DELETED)
+
+	return client.IgnoreNotFound(r.Client.Delete(ctx, tunnel))
+}
+
+func (r *TunnelReconciler) deleteGatewayResources(ctx context.Context, tunnel *v1alpha1.Tunnel) error {
 	resourceName := gatewayResourceName(tunnel.Name)
 	objects := []client.Object{
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
@@ -322,29 +316,21 @@ func (r *TunnelReconciler) handleDeletion(ctx context.Context, clusterClient cli
 	}
 
 	for _, obj := range objects {
-		if err := client.IgnoreNotFound(clusterClient.Delete(ctx, obj)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("deleting %T: %w", obj, err)
+		if err := client.IgnoreNotFound(r.Client.Delete(ctx, obj)); err != nil {
+			return fmt.Errorf("deleting %T: %w", obj, err)
 		}
 	}
 
-	controllerutil.RemoveFinalizer(tunnel, finalizerName)
-	if err := clusterClient.Update(ctx, tunnel); err != nil {
-		return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
-	}
-
-	r.releaseForwarderPort(tunnel)
-	r.notifyTunnelUpdate(ctx, clusterClient, tunnel, forwarderv1.UpdateType_DELETED)
-
-	return ctrl.Result{}, nil
+	return nil
 }
 
 func (r *TunnelReconciler) resolveForwarderVIP(ctx context.Context) (string, error) {
-	if r.LocalClient == nil || r.ForwarderServiceKey.Name == "" {
+	if r.Client == nil || r.ForwarderServiceKey.Name == "" {
 		return "", fmt.Errorf("forwarder service not configured")
 	}
 
 	svc := &corev1.Service{}
-	if err := r.LocalClient.Get(ctx, r.ForwarderServiceKey, svc); err != nil {
+	if err := r.Client.Get(ctx, r.ForwarderServiceKey, svc); err != nil {
 		return "", fmt.Errorf("getting forwarder service %s: %w", r.ForwarderServiceKey, err)
 	}
 
@@ -366,7 +352,7 @@ func (r *TunnelReconciler) releaseForwarderPort(tunnel *v1alpha1.Tunnel) {
 	portAllocationsActive.Dec()
 }
 
-func (r *TunnelReconciler) notifyTunnelUpdate(ctx context.Context, clusterClient client.Client, tunnel *v1alpha1.Tunnel, updateType forwarderv1.UpdateType) {
+func (r *TunnelReconciler) notifyTunnelUpdate(ctx context.Context, tunnel *v1alpha1.Tunnel, updateType forwarderv1.UpdateType) {
 	if r.ForwarderServer == nil || tunnel.Status.ForwarderPort <= 0 {
 		return
 	}
@@ -374,7 +360,7 @@ func (r *TunnelReconciler) notifyTunnelUpdate(ctx context.Context, clusterClient
 	gatewayAddress := net.JoinHostPort(tunnel.Status.GatewayPodName, strconv.Itoa(51820))
 	if tunnel.Status.GatewayPodName != "" {
 		pod := &corev1.Pod{}
-		if err := clusterClient.Get(ctx, client.ObjectKey{Namespace: tunnel.Namespace, Name: tunnel.Status.GatewayPodName}, pod); err == nil && pod.Status.PodIP != "" {
+		if err := r.Client.Get(ctx, client.ObjectKey{Namespace: tunnel.Namespace, Name: tunnel.Status.GatewayPodName}, pod); err == nil && pod.Status.PodIP != "" {
 			gatewayAddress = net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(51820))
 		}
 	}
@@ -425,9 +411,8 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
-func (r *TunnelReconciler) SetupWithManager(mgr mcmanager.Manager) error {
-	r.ClusterProvider = mgr
-	return mcbuilder.ControllerManagedBy(mgr).
+func (r *TunnelReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
 		Named("tunnel-controller").
 		For(&v1alpha1.Tunnel{}).
 		Complete(r)

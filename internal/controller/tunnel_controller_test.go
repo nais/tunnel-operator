@@ -11,14 +11,13 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
-	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 )
 
 var _ = Describe("Tunnel Controller", func() {
@@ -33,20 +32,17 @@ var _ = Describe("Tunnel Controller", func() {
 			Namespace: namespace,
 		}
 
-		newRequest := func() mcreconcile.Request {
-			return mcreconcile.Request{
-				Request: reconcile.Request{
-					NamespacedName: typeNamespacedName,
-				},
+		newRequest := func() ctrl.Request {
+			return ctrl.Request{
+				NamespacedName: typeNamespacedName,
 			}
 		}
 
 		newReconciler := func() *TunnelReconciler {
 			return &TunnelReconciler{
-				ClusterProvider:     testClusterProv,
+				Client:              k8sClient,
 				Scheme:              k8sClient.Scheme(),
 				PortAllocator:       portalloc.New(20000, 20010),
-				LocalClient:         k8sClient,
 				ForwarderServiceKey: client.ObjectKey{Name: "test-forwarder", Namespace: namespace},
 			}
 		}
