@@ -13,8 +13,8 @@ env:
   GOOGLE_REGISTRY: "europe-north1-docker.pkg.dev"
 
 jobs:
-  lint:
-    name: Check project
+  checks:
+    name: Lint and test
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
@@ -25,17 +25,6 @@ jobs:
           go mod tidy
           mise run fmt
           mise run vet
-
-  test:
-    name: Test project
-    runs-on: ubuntu-latest
-    steps:
-      - name: Clone the code
-        uses: actions/checkout@v5
-      - uses: jdx/mise-action@v4
-      - name: Running Tests
-        run: |
-          go mod tidy
           mise run test
 
   build:
@@ -173,7 +162,6 @@ jobs:
       - build
       - build-gateway
       - build-forwarder
-      - test-chart
     steps:
       - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # ratchet:actions/checkout@v5
       - id: "auth"
@@ -220,13 +208,10 @@ jobs:
     name: Rollout
     if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
     needs:
+      - checks
       - build
-      - build-gateway
-      - build-forwarder
       - chart
       - test-chart
-      - test
-      - lint
     runs-on: fasit-deploy
     permissions:
       id-token: write
