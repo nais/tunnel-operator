@@ -8,7 +8,6 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -103,9 +102,6 @@ var _ = Describe("Tunnel Controller", func() {
 			for _, obj := range []client.Object{
 				&corev1.Pod{},
 				&networkingv1.NetworkPolicy{},
-				&corev1.ServiceAccount{},
-				&rbacv1.Role{},
-				&rbacv1.RoleBinding{},
 			} {
 				if err := k8sClient.Get(ctx, gwKey, obj); err == nil {
 					_ = k8sClient.Delete(ctx, obj)
@@ -125,8 +121,9 @@ var _ = Describe("Tunnel Controller", func() {
 
 			pod := &corev1.Pod{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, pod)).To(Succeed())
-			Expect(pod.Spec.ServiceAccountName).To(Equal(gatewayResourceName(resourceName)))
 			Expect(pod.Labels).To(HaveKeyWithValue("tunnels.nais.io/tunnel", resourceName))
+			Expect(pod.Spec.Containers[0].ReadinessProbe).NotTo(BeNil())
+			Expect(pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Path).To(Equal("/status"))
 
 			networkPolicy := &networkingv1.NetworkPolicy{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, networkPolicy)).To(Succeed())
@@ -135,18 +132,6 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(networkPolicy.Spec.Egress[0].To).To(HaveLen(1))
 			Expect(networkPolicy.Spec.Egress[0].To[0].IPBlock).NotTo(BeNil())
 			Expect(networkPolicy.Spec.Egress[0].To[0].IPBlock.CIDR).To(Equal("10.0.0.10/32"))
-
-			serviceAccount := &corev1.ServiceAccount{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, serviceAccount)).To(Succeed())
-
-			role := &rbacv1.Role{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, role)).To(Succeed())
-			Expect(role.Rules).To(HaveLen(2))
-
-			roleBinding := &rbacv1.RoleBinding{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, roleBinding)).To(Succeed())
-			Expect(roleBinding.Subjects).To(HaveLen(1))
-			Expect(roleBinding.Subjects[0].Name).To(Equal(gatewayResourceName(resourceName)))
 
 			tunnel := &v1alpha1.Tunnel{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
@@ -172,7 +157,6 @@ var _ = Describe("Tunnel Controller", func() {
 
 			pod := &corev1.Pod{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, pod)).To(Succeed())
-			Expect(pod.Spec.ServiceAccountName).To(Equal(gatewayResourceName(resourceName)))
 
 			tunnel := &v1alpha1.Tunnel{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
@@ -271,9 +255,6 @@ var _ = Describe("Tunnel Controller", func() {
 
 			Expect(errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, &corev1.Pod{}))).To(BeTrue())
 			Expect(errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, &networkingv1.NetworkPolicy{}))).To(BeTrue())
-			Expect(errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, &corev1.ServiceAccount{}))).To(BeTrue())
-			Expect(errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, &rbacv1.Role{}))).To(BeTrue())
-			Expect(errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, &rbacv1.RoleBinding{}))).To(BeTrue())
 			Expect(errors.IsNotFound(k8sClient.Get(ctx, typeNamespacedName, &v1alpha1.Tunnel{}))).To(BeTrue())
 		})
 
@@ -307,6 +288,41 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(udpRule.Ports).To(HaveLen(1))
 			Expect(udpRule.Ports[0].Protocol).NotTo(BeNil())
 			Expect(*udpRule.Ports[0].Protocol).To(Equal(corev1.ProtocolUDP))
+		})
+
+		It("should set phase to Ready when pod is ready and gateway status is available", func() {
+			reconciler := newReconciler()
+			reconciler.FetchGatewayStatus = func(podIP string) (string, error) {
+				return "mock-gateway-public-key", nil
+			}
+
+			By("running two reconciles to create all resources")
+			_, err := reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+
+			By("simulating the pod becoming ready")
+			pod := &corev1.Pod{}
+			podKey := types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}
+			Expect(k8sClient.Get(ctx, podKey, pod)).To(Succeed())
+			pod.Status.Phase = corev1.PodRunning
+			pod.Status.PodIP = "10.244.0.5"
+			pod.Status.Conditions = []corev1.PodCondition{{
+				Type:   corev1.PodReady,
+				Status: corev1.ConditionTrue,
+			}}
+			Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
+
+			By("reconciling again — operator should fetch public key and set Ready")
+			_, err = reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+
+			tunnel := &v1alpha1.Tunnel{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
+			Expect(tunnel.Status.Phase).To(Equal(v1alpha1.TunnelPhaseReady))
+			Expect(tunnel.Status.GatewayPublicKey).To(Equal("mock-gateway-public-key"))
+			Expect(tunnel.Status.Message).To(Equal("Gateway ready"))
 		})
 	})
 })

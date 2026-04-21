@@ -13,25 +13,14 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
-	naisiov1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
 	"github.com/nais/tunnel-operator/pkg/wireguard"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
 )
-
-var tunnelGVR = schema.GroupVersionResource{
-	Group:    "nais.io",
-	Version:  "v1alpha1",
-	Resource: "tunnels",
-}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -54,6 +43,29 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	tunnelNamespace := requireEnv("TUNNEL_NAMESPACE")
 
 	metrics := newGatewayMetrics(tunnelName, tunnelNamespace, targetHost, targetPortStr)
+
+	var publicKeyValue atomic.Pointer[string]
+
+	statusMux := http.NewServeMux()
+	statusMux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		pk := publicKeyValue.Load()
+		if pk == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"publicKey": *pk})
+	})
+	go func() {
+		statusServer := &http.Server{
+			Addr:              ":8080",
+			Handler:           statusMux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		if err := statusServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("status server error", "err", err)
+		}
+	}()
 
 	go func() {
 		metricsMux := http.NewServeMux()
@@ -85,24 +97,6 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	publicKey := privateKey.PublicKey()
 	logger.Info("generated WireGuard keypair", "publicKey", publicKey.String())
 
-	cfg, err := rest.InClusterConfig()
-	if err != nil {
-		return fmt.Errorf("get in-cluster config: %w", err)
-	}
-	dynClient, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("create dynamic client: %w", err)
-	}
-
-	logger.Info("updating Tunnel CR status")
-	err = updateTunnelStatus(
-		ctx, dynClient, tunnelNamespace, tunnelName,
-		publicKey.String(), naisiov1alpha1.TunnelPhaseReady, "Gateway ready",
-	)
-	if err != nil {
-		return fmt.Errorf("update tunnel status: %w", err)
-	}
-
 	logger.Info("creating WireGuard device", "listenPort", 51820)
 	dev, err := wireguard.NewDevice(privateKey, peerPublicKey, "", 51820, wireguard.TunnelIPGateway)
 	if err != nil {
@@ -120,12 +114,16 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer func() { _ = listener.Close() }()
 
+	pkStr := publicKey.String()
+	publicKeyValue.Store(&pkStr)
+	logger.Info("gateway ready", "publicKey", pkStr)
+
 	errCh := make(chan error, 1)
 	activityCh := make(chan struct{}, 1)
 	go serveTCPProxy(ctx, listener, targetAddr, logger, errCh, activityCh, metrics)
 
 	peerTimeout := time.Duration(3*wireguard.PersistentKeepalive) * time.Second
-	logger.Info("gateway ready, waiting for peer connection", "peerTimeout", peerTimeout.String())
+	logger.Info("waiting for peer connection", "peerTimeout", peerTimeout.String())
 
 	peerTimeoutCh := make(chan struct{})
 	go func() {
@@ -160,24 +158,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		logger.Info("gateway shutting down")
 	case err := <-errCh:
 		if err != nil {
-			_ = updateTunnelStatus(
-				context.Background(), dynClient, tunnelNamespace, tunnelName,
-				publicKey.String(), naisiov1alpha1.TunnelPhaseFailed, err.Error(),
-			)
 			return err
 		}
 	case <-peerTimeoutCh:
 		logger.Info("peer disconnected (no activity timeout)", "timeout", peerTimeout.String())
-	}
-
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancelShutdown()
-	err = updateTunnelStatus(
-		shutdownCtx, dynClient, tunnelNamespace, tunnelName,
-		publicKey.String(), naisiov1alpha1.TunnelPhaseTerminated, "Gateway terminated",
-	)
-	if err != nil {
-		logger.Error("failed to update termination status", "err", err)
 	}
 
 	return nil
@@ -246,38 +230,6 @@ func copyAndClose(dst, src net.Conn) (int64, error) {
 		_ = tc.CloseWrite()
 	}
 	return n, err
-}
-
-func updateTunnelStatus(
-	ctx context.Context, client dynamic.Interface,
-	namespace, name, pubKey string, phase naisiov1alpha1.TunnelPhase, message string,
-) error {
-	patch := map[string]any{
-		"status": map[string]any{
-			"phase":            string(phase),
-			"gatewayPublicKey": pubKey,
-			"message":          message,
-		},
-	}
-
-	patchBytes, err := json.Marshal(patch)
-	if err != nil {
-		return fmt.Errorf("marshal status patch: %w", err)
-	}
-
-	_, err = client.Resource(tunnelGVR).Namespace(namespace).Patch(
-		ctx,
-		name,
-		types.MergePatchType,
-		patchBytes,
-		metav1.PatchOptions{},
-		"status",
-	)
-	if err != nil {
-		return fmt.Errorf("patch status: %w", err)
-	}
-
-	return nil
 }
 
 func requireEnv(key string) string {

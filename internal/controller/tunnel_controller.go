@@ -2,10 +2,13 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
 	operatorgrpc "github.com/nais/tunnel-operator/internal/grpc"
@@ -13,7 +16,6 @@ import (
 	"github.com/nais/tunnel-operator/pkg/portalloc"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,7 +27,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const finalizerName = "tunnels.nais.io/cleanup"
+const (
+	finalizerName     = "tunnels.nais.io/cleanup"
+	gatewayStatusPort = 8080
+)
 
 type TunnelReconciler struct {
 	Client              client.Client
@@ -33,6 +38,7 @@ type TunnelReconciler struct {
 	PortAllocator       *portalloc.PortAllocator
 	ForwarderServer     *operatorgrpc.ForwarderServer
 	ForwarderServiceKey client.ObjectKey
+	FetchGatewayStatus  func(podIP string) (string, error)
 }
 
 //+kubebuilder:rbac:groups=nais.io,resources=tunnels,verbs=get;list;watch;create;update;patch;delete
@@ -40,8 +46,6 @@ type TunnelReconciler struct {
 //+kubebuilder:rbac:groups=nais.io,resources=tunnels/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
-//+kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;delete
-//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;delete
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
 
 func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
@@ -82,7 +86,6 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 
 	resourceName := gatewayResourceName(tunnel.Name)
 	labels := gatewayLabels(tunnel.Name)
-	saName := resourceName
 	gatewayImage := os.Getenv("GATEWAY_IMAGE")
 	if gatewayImage == "" {
 		gatewayImage = "ghcr.io/nais/tunnel-operator/gateway:latest"
@@ -91,52 +94,6 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 	deadlineSeconds := int64(3600)
 	if tunnel.Spec.ActiveDeadlineSeconds != nil {
 		deadlineSeconds = *tunnel.Spec.ActiveDeadlineSeconds
-	}
-
-	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, sa, func() error {
-		sa.Labels = labels
-		return controllerutil.SetControllerReference(tunnel, sa, r.Scheme)
-	}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconciling serviceaccount: %w", err)
-	}
-
-	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, role, func() error {
-		role.Labels = labels
-		role.Rules = []rbacv1.PolicyRule{
-			{
-				APIGroups: []string{"nais.io"},
-				Resources: []string{"tunnels"},
-				Verbs:     []string{"get"},
-			},
-			{
-				APIGroups: []string{"nais.io"},
-				Resources: []string{"tunnels/status"},
-				Verbs:     []string{"get", "patch"},
-			},
-		}
-		return controllerutil.SetControllerReference(tunnel, role, r.Scheme)
-	}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconciling role: %w", err)
-	}
-
-	roleBinding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, roleBinding, func() error {
-		roleBinding.Labels = labels
-		roleBinding.RoleRef = rbacv1.RoleRef{
-			APIGroup: rbacv1.GroupName,
-			Kind:     "Role",
-			Name:     resourceName,
-		}
-		roleBinding.Subjects = []rbacv1.Subject{{
-			Kind:      rbacv1.ServiceAccountKind,
-			Name:      saName,
-			Namespace: tunnel.Namespace,
-		}}
-		return controllerutil.SetControllerReference(tunnel, roleBinding, r.Scheme)
-	}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconciling rolebinding: %w", err)
 	}
 
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
@@ -151,7 +108,6 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			"prometheus.io/path":   "/metrics",
 		}
 		pod.Spec = corev1.PodSpec{
-			ServiceAccountName:    saName,
 			RestartPolicy:         corev1.RestartPolicyNever,
 			ActiveDeadlineSeconds: &deadlineSeconds,
 			SecurityContext: &corev1.PodSecurityContext{
@@ -164,17 +120,34 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			Containers: []corev1.Container{{
 				Name:  "gateway",
 				Image: gatewayImage,
-				Ports: []corev1.ContainerPort{{
-					Name:          "metrics",
-					ContainerPort: 9091,
-					Protocol:      corev1.ProtocolTCP,
-				}},
+				Ports: []corev1.ContainerPort{
+					{
+						Name:          "status",
+						ContainerPort: int32(gatewayStatusPort),
+						Protocol:      corev1.ProtocolTCP,
+					},
+					{
+						Name:          "metrics",
+						ContainerPort: 9091,
+						Protocol:      corev1.ProtocolTCP,
+					},
+				},
 				Env: []corev1.EnvVar{
 					{Name: "TUNNEL_PEER_PUBLIC_KEY", Value: tunnel.Spec.ClientPublicKey},
 					{Name: "TUNNEL_TARGET_HOST", Value: tunnel.Spec.Target.Host},
 					{Name: "TUNNEL_TARGET_PORT", Value: strconv.Itoa(int(tunnel.Spec.Target.Port))},
 					{Name: "TUNNEL_NAME", Value: tunnel.Name},
 					{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
+				},
+				ReadinessProbe: &corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{
+						HTTPGet: &corev1.HTTPGetAction{
+							Path: "/status",
+							Port: intstr.FromInt32(int32(gatewayStatusPort)),
+						},
+					},
+					InitialDelaySeconds: 1,
+					PeriodSeconds:       2,
 				},
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: new(false),
@@ -240,19 +213,45 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 		updated = true
 		updateType = forwarderv1.UpdateType_ADDED
 	}
-	if tunnel.Status.Phase != v1alpha1.TunnelPhaseProvisioning {
-		tunnel.Status.Phase = v1alpha1.TunnelPhaseProvisioning
-		updated = true
-	}
-	if tunnel.Status.Message != "Gateway pod starting" {
-		tunnel.Status.Message = "Gateway pod starting"
-		updated = true
-	}
 	if tunnel.Status.GatewayPodName != resourceName {
 		tunnel.Status.GatewayPodName = resourceName
 		updated = true
 	}
-	if isPodReady(pod) {
+
+	switch {
+	case pod.Status.Phase == corev1.PodFailed:
+		if tunnel.Status.Phase != v1alpha1.TunnelPhaseFailed {
+			tunnel.Status.Phase = v1alpha1.TunnelPhaseFailed
+			tunnel.Status.Message = "Gateway pod failed"
+			updated = true
+		}
+	case pod.Status.Phase == corev1.PodSucceeded:
+		if tunnel.Status.Phase != v1alpha1.TunnelPhaseTerminated {
+			tunnel.Status.Phase = v1alpha1.TunnelPhaseTerminated
+			tunnel.Status.Message = "Gateway terminated"
+			updated = true
+		}
+	case isPodReady(pod):
+		fetcher := r.FetchGatewayStatus
+		if fetcher == nil {
+			fetcher = defaultFetchGatewayStatus
+		}
+		if pod.Status.PodIP != "" {
+			pubKey, err := fetcher(pod.Status.PodIP)
+			if err != nil {
+				logger.Info("gateway status not yet available", "err", err)
+			} else if pubKey != "" {
+				if tunnel.Status.GatewayPublicKey != pubKey {
+					tunnel.Status.GatewayPublicKey = pubKey
+					updated = true
+				}
+				if tunnel.Status.Phase != v1alpha1.TunnelPhaseReady {
+					tunnel.Status.Phase = v1alpha1.TunnelPhaseReady
+					tunnel.Status.Message = "Gateway ready"
+					updated = true
+				}
+			}
+		}
 		vip, err := r.resolveForwarderVIP(ctx)
 		if err == nil && vip != "" {
 			forwarderEndpoint := net.JoinHostPort(vip, strconv.Itoa(int(tunnel.Status.ForwarderPort)))
@@ -261,7 +260,14 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 				updated = true
 			}
 		}
+	default:
+		if tunnel.Status.Phase == "" || tunnel.Status.Phase == v1alpha1.TunnelPhasePending {
+			tunnel.Status.Phase = v1alpha1.TunnelPhaseProvisioning
+			tunnel.Status.Message = "Gateway pod starting"
+			updated = true
+		}
 	}
+
 	if updated {
 		if err := r.Client.Status().Update(ctx, tunnel); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating tunnel status: %w", err)
@@ -319,9 +325,6 @@ func (r *TunnelReconciler) deleteGatewayResources(ctx context.Context, tunnel *v
 	objects := []client.Object{
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
 		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
-		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
-		&rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
-		&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
 	}
 
 	for _, obj := range objects {
@@ -389,6 +392,28 @@ func (r *TunnelReconciler) notifyTunnelUpdate(ctx context.Context, tunnel *v1alp
 	})
 }
 
+func defaultFetchGatewayStatus(podIP string) (string, error) {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://%s:%d/status", podIP, gatewayStatusPort))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gateway not ready: HTTP %d", resp.StatusCode)
+	}
+
+	var status struct {
+		PublicKey string `json:"publicKey"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return "", fmt.Errorf("decoding gateway status: %w", err)
+	}
+
+	return status.PublicKey, nil
+}
+
 func tunnelKey(tunnel *v1alpha1.Tunnel) string {
 	return tunnel.Namespace + "/" + tunnel.Name
 }
@@ -401,7 +426,6 @@ func gatewayLabels(tunnelName string) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/managed-by": "tunnel-operator",
 		"tunnels.nais.io/tunnel":       tunnelName,
-		"apiserver-access":             "enabled",
 	}
 }
 
@@ -424,5 +448,6 @@ func (r *TunnelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("tunnel-controller").
 		For(&v1alpha1.Tunnel{}).
+		Owns(&corev1.Pod{}).
 		Complete(r)
 }
