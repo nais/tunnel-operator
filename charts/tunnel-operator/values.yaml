@@ -53,3 +53,4 @@ forwarder:
     max: 51919
   grpcAddr: "tunnel-operator:9090"
   healthAddr: ":8080"
+  logLevel: "debug"

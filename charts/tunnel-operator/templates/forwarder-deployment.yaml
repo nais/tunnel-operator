@@ -33,6 +33,8 @@ spec:
           value: {{ .Values.forwarder.grpcAddr | quote }}
         - name: HEALTH_ADDR
           value: {{ .Values.forwarder.healthAddr | quote }}
+        - name: LOG_LEVEL
+          value: {{ .Values.forwarder.logLevel | default "info" | quote }}
         ports:
         - name: health
           containerPort: 8080
