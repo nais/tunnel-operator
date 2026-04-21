@@ -42,19 +42,20 @@ type netstackView struct {
 // endpoint: the other peer's UDP endpoint (ip:port)
 // listenPort: local UDP port to listen on (0 for OS-assigned)
 // localIP: the tunnel IP for this peer (e.g., TunnelIPClient or TunnelIPGateway)
+// verbose: if true, WireGuard logs at LogLevelVerbose instead of LogLevelError
 func NewDevice(
 	privateKey wgtypes.Key, peerPublicKey wgtypes.Key,
-	endpoint string, listenPort int, localIP string,
+	endpoint string, listenPort int, localIP string, verbose bool,
 ) (*Device, error) {
 	return newDevice(
 		privateKey, peerPublicKey, endpoint,
-		conn.NewDefaultBind(), fmt.Sprintf("listen_port=%d\n", listenPort), localIP,
+		conn.NewDefaultBind(), fmt.Sprintf("listen_port=%d\n", listenPort), localIP, verbose,
 	)
 }
 
 func newDevice(
 	privateKey wgtypes.Key, peerPublicKey wgtypes.Key,
-	endpoint string, bind conn.Bind, listenPortConfig string, localIP string,
+	endpoint string, bind conn.Bind, listenPortConfig string, localIP string, verbose bool,
 ) (*Device, error) {
 	prefix, err := netip.ParsePrefix(localIP)
 	if err != nil {
@@ -73,7 +74,11 @@ func newDevice(
 		return nil, fmt.Errorf("wireguard bind is nil")
 	}
 
-	logger := device.NewLogger(device.LogLevelError, "[wireguard] ")
+	logLevel := device.LogLevelError
+	if verbose {
+		logLevel = device.LogLevelVerbose
+	}
+	logger := device.NewLogger(logLevel, "[wireguard] ")
 	dev := device.NewDevice(tun, bind, logger)
 
 	cfg := fmt.Sprintf(`private_key=%s

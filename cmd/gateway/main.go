@@ -23,7 +23,8 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logLevel := parseLogLevel(os.Getenv("LOG_LEVEL"))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
 	if err := run(context.Background(), logger); err != nil {
@@ -98,7 +99,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	logger.Info("generated WireGuard keypair", "publicKey", publicKey.String())
 
 	logger.Info("creating WireGuard device", "listenPort", 51820)
-	dev, err := wireguard.NewDevice(privateKey, peerPublicKey, "", 51820, wireguard.TunnelIPGateway)
+	dev, err := wireguard.NewDevice(privateKey, peerPublicKey, "", 51820, wireguard.TunnelIPGateway, parseLogLevel(os.Getenv("LOG_LEVEL")) == slog.LevelDebug)
 	if err != nil {
 		return fmt.Errorf("create WireGuard device: %w", err)
 	}
@@ -239,4 +240,17 @@ func requireEnv(key string) string {
 		os.Exit(1)
 	}
 	return v
+}
+
+func parseLogLevel(raw string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

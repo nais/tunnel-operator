@@ -1,5 +1,7 @@
 replicaCount: 1
 
+logLevel: "debug"
+
 image:
   repository: europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator
   pullPolicy: IfNotPresent

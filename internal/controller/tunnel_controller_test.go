@@ -187,6 +187,7 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_TARGET_PORT", "6379"))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_NAME", resourceName))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_NAMESPACE", namespace))
+			Expect(envByName).To(HaveKey("LOG_LEVEL"))
 		})
 
 		It("should delete the tunnel CR when status is Terminated", func() {

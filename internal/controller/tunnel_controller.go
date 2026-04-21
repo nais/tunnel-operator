@@ -138,6 +138,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 					{Name: "TUNNEL_TARGET_PORT", Value: strconv.Itoa(int(tunnel.Spec.Target.Port))},
 					{Name: "TUNNEL_NAME", Value: tunnel.Name},
 					{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
+					{Name: "LOG_LEVEL", Value: os.Getenv("LOG_LEVEL")},
 				},
 				ReadinessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{

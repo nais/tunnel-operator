@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/go-logr/logr"
 	operatorgrpc "github.com/nais/tunnel-operator/internal/grpc"
@@ -34,7 +35,8 @@ func init() {
 }
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	logLevel := parseLogLevel(os.Getenv("LOG_LEVEL"))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})))
 	crlog.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
 
 	grpcAddr := os.Getenv("GRPC_ADDR")
@@ -127,4 +129,17 @@ func envInt32(key string, fallback int32) int32 {
 		return fallback
 	}
 	return int32(n)
+}
+
+func parseLogLevel(raw string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

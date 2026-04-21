@@ -16,7 +16,7 @@ func TestNewDevice(t *testing.T) {
 		t.Fatalf("generate peer key: %v", err)
 	}
 
-	dev, err := NewDevice(privKey, peerKey.PublicKey(), "127.0.0.1:51820", 0, TunnelIPClient)
+	dev, err := NewDevice(privKey, peerKey.PublicKey(), "127.0.0.1:51820", 0, TunnelIPClient, false)
 	if err != nil {
 		t.Fatalf("new device: %v", err)
 	}
