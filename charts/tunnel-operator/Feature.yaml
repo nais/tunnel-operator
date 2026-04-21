@@ -45,3 +45,10 @@ values:
     computed:
       template: |
         {{ .Env.apiserver_endpoint }}/32
+
+  logLevel:
+    displayName: Log level
+    description: Log level for all components (debug, info, warn, error)
+    config:
+      type: string
+      default: "info"

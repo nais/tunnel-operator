@@ -1,6 +1,6 @@
 replicaCount: 1
 
-logLevel: "debug"
+logLevel: "info"
 
 image:
   repository: europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator
@@ -55,4 +55,3 @@ forwarder:
     max: 51919
   grpcAddr: "tunnel-operator:9090"
   healthAddr: ":8080"
-  logLevel: "debug"
