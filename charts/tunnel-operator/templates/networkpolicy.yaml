@@ -32,6 +32,14 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: tunnel-operator
+      ports:
+        - protocol: TCP
+          port: 8080
     {{- if .Values.apiServer.address }}
     - to:
         - ipBlock:

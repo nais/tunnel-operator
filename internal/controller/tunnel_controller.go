@@ -178,7 +178,28 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			PodSelector: metav1.LabelSelector{
 				MatchLabels: map[string]string{"tunnels.nais.io/tunnel": tunnel.Name},
 			},
-			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{
+				{
+					Ports: []networkingv1.NetworkPolicyPort{
+						{
+							Protocol: new(corev1.ProtocolUDP),
+							Port:     intstrPtr(51820),
+						},
+						{
+							Protocol: new(corev1.ProtocolTCP),
+							Port:     intstrPtr(int32(gatewayStatusPort)),
+						},
+						{
+							Protocol: new(corev1.ProtocolTCP),
+							Port:     intstrPtr(9091),
+						},
+					},
+				},
+			},
 			Egress: []networkingv1.NetworkPolicyEgressRule{
 				{
 					To: []networkingv1.NetworkPolicyPeer{{
@@ -202,6 +223,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 	}
 
 	updated := false
+	var requeueAfter time.Duration
 	updateType := forwarderv1.UpdateType_MODIFIED
 	if tunnel.Status.ForwarderPort == 0 && r.PortAllocator != nil {
 		allocatedPort, err := r.PortAllocator.Allocate(tunnelKey(tunnel))
@@ -240,6 +262,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			pubKey, err := fetcher(pod.Status.PodIP)
 			if err != nil {
 				logger.Info("gateway status not yet available", "err", err)
+				requeueAfter = 2 * time.Second
 			} else if pubKey != "" {
 				if tunnel.Status.GatewayPublicKey != pubKey {
 					tunnel.Status.GatewayPublicKey = pubKey
@@ -259,6 +282,9 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 				tunnel.Status.ForwarderEndpoint = forwarderEndpoint
 				updated = true
 			}
+		} else if err != nil {
+			logger.Info("forwarder VIP not yet available", "err", err)
+			requeueAfter = 2 * time.Second
 		}
 	default:
 		if tunnel.Status.Phase == "" || tunnel.Status.Phase == v1alpha1.TunnelPhasePending {
@@ -278,7 +304,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 
 	logger.Info("reconciled tunnel", "tunnel", req.NamespacedName, "pod", resourceName)
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
 func (r *TunnelReconciler) handleDeletion(ctx context.Context, tunnel *v1alpha1.Tunnel) error {
