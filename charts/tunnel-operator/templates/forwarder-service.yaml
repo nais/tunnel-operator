@@ -20,9 +20,10 @@ spec:
     {{- include "tunnel-operator.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: forwarder
   ports:
-    # Placeholder LB port for provisioning; actual tunnel traffic is handled on dynamic ports.
-    - name: wireguard
-      port: 51820
-      targetPort: 51820
+    {{- range untilStep (int .Values.forwarder.portRange.min) (add1 (int .Values.forwarder.portRange.max) | int) 1 }}
+    - name: wg-{{ . }}
+      port: {{ . }}
+      targetPort: {{ . }}
       protocol: UDP
+    {{- end }}
 {{- end }}

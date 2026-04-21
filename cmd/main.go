@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 
 	"github.com/go-logr/logr"
 	operatorgrpc "github.com/nais/tunnel-operator/internal/grpc"
@@ -57,7 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	allocator := portalloc.New(10000, 60000)
+	allocator := portalloc.New(envInt32("FORWARDER_PORT_RANGE_MIN", 51820), envInt32("FORWARDER_PORT_RANGE_MAX", 51919))
 	forwarderServiceKey := client.ObjectKey{Name: forwarderServiceName, Namespace: podNamespace}
 	grpcServer := operatorgrpc.NewForwarderServer(mgr.GetClient(), allocator, forwarderServiceKey)
 	loadExistingAllocations(context.Background(), mgr.GetAPIReader(), allocator)
@@ -113,4 +114,17 @@ func loadExistingAllocations(ctx context.Context, kubeClient client.Reader, allo
 
 		allocator.LoadExisting(tunnel.Namespace+"/"+tunnel.Name, tunnel.Status.ForwarderPort)
 	}
+}
+
+func envInt32(key string, fallback int32) int32 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil {
+		slog.Warn("invalid env var, using default", "key", key, "value", v, "default", fallback)
+		return fallback
+	}
+	return int32(n)
 }

@@ -9,8 +9,8 @@ grpc:
   port: 9090
 
 forwarderPortRange:
-  min: 10000
-  max: 60000
+  min: 51820
+  max: 51919
 
 apiServer:
   address: ""
@@ -49,7 +49,7 @@ forwarder:
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
   portRange:
-    min: 10000
-    max: 60000
+    min: 51820
+    max: 51919
   grpcAddr: "tunnel-operator:9090"
   healthAddr: ":8080"
