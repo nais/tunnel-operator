@@ -34,7 +34,8 @@ spec:
             cidr: 0.0.0.0/0
       ports:
         - protocol: UDP
-          port: 51820
+          port: {{ .Values.forwarder.portRange.min }}
+          endPort: {{ .Values.forwarder.portRange.max }}
     - to:
         - podSelector:
             matchLabels:
