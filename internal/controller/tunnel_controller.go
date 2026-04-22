@@ -174,9 +174,6 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 		if err := controllerutil.SetControllerReference(tunnel, pod, r.Scheme); err != nil {
 			return ctrl.Result{}, fmt.Errorf("setting owner reference on pod: %w", err)
 		}
-		if err := r.Client.Create(ctx, pod); err != nil {
-			return ctrl.Result{}, fmt.Errorf("creating gateway pod: %w", err)
-		}
 
 		if gatewayDebug {
 			polex := newPolicyException(resourceName, tunnel.Namespace)
@@ -188,6 +185,10 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 					return ctrl.Result{}, fmt.Errorf("creating policy exception: %w", err)
 				}
 			}
+		}
+
+		if err := r.Client.Create(ctx, pod); err != nil {
+			return ctrl.Result{}, fmt.Errorf("creating gateway pod: %w", err)
 		}
 	}
 
