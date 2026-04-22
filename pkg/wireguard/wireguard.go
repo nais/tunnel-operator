@@ -3,6 +3,7 @@ package wireguard
 import (
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"unsafe"
@@ -42,20 +43,20 @@ type netstackView struct {
 // endpoint: the other peer's UDP endpoint (ip:port)
 // listenPort: local UDP port to listen on (0 for OS-assigned)
 // localIP: the tunnel IP for this peer (e.g., TunnelIPClient or TunnelIPGateway)
-// verbose: if true, WireGuard logs at LogLevelVerbose instead of LogLevelError
+// logger: structured logger for WireGuard device logs (nil for silent)
 func NewDevice(
 	privateKey wgtypes.Key, peerPublicKey wgtypes.Key,
-	endpoint string, listenPort int, localIP string, verbose bool,
+	endpoint string, listenPort int, localIP string, logger *slog.Logger,
 ) (*Device, error) {
 	return newDevice(
 		privateKey, peerPublicKey, endpoint,
-		conn.NewDefaultBind(), fmt.Sprintf("listen_port=%d\n", listenPort), localIP, verbose,
+		conn.NewDefaultBind(), fmt.Sprintf("listen_port=%d\n", listenPort), localIP, logger,
 	)
 }
 
 func newDevice(
 	privateKey wgtypes.Key, peerPublicKey wgtypes.Key,
-	endpoint string, bind conn.Bind, listenPortConfig string, localIP string, verbose bool,
+	endpoint string, bind conn.Bind, listenPortConfig string, localIP string, logger *slog.Logger,
 ) (*Device, error) {
 	prefix, err := netip.ParsePrefix(localIP)
 	if err != nil {
@@ -74,12 +75,8 @@ func newDevice(
 		return nil, fmt.Errorf("wireguard bind is nil")
 	}
 
-	logLevel := device.LogLevelError
-	if verbose {
-		logLevel = device.LogLevelVerbose
-	}
-	logger := device.NewLogger(logLevel, "[wireguard] ")
-	dev := device.NewDevice(tun, bind, logger)
+	wgLogger := slogDeviceLogger(logger)
+	dev := device.NewDevice(tun, bind, wgLogger)
 
 	cfg := fmt.Sprintf(`private_key=%s
 %spublic_key=%s
@@ -132,4 +129,19 @@ func (d *Device) Close() {
 
 func encodeKey(key wgtypes.Key) string {
 	return hex.EncodeToString(key[:])
+}
+
+func slogDeviceLogger(logger *slog.Logger) *device.Logger {
+	if logger == nil {
+		return device.NewLogger(device.LogLevelSilent, "")
+	}
+	wg := logger.WithGroup("wireguard")
+	return &device.Logger{
+		Verbosef: func(format string, args ...any) {
+			wg.Debug(fmt.Sprintf(format, args...))
+		},
+		Errorf: func(format string, args ...any) {
+			wg.Error(fmt.Sprintf(format, args...))
+		},
+	}
 }
