@@ -223,6 +223,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 		return ctrl.Result{}, fmt.Errorf("reconciling networkpolicy: %w", err)
 	}
 
+	statusBase := tunnel.DeepCopy()
 	updated := false
 	var requeueAfter time.Duration
 	updateType := forwarderv1.UpdateType_MODIFIED
@@ -296,7 +297,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 	}
 
 	if updated {
-		if err := r.Client.Status().Update(ctx, tunnel); err != nil {
+		if err := r.Client.Status().Patch(ctx, tunnel, client.MergeFrom(statusBase)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating tunnel status: %w", err)
 		}
 		tunnelsActive.WithLabelValues(string(tunnel.Status.Phase), tunnel.Namespace).Inc()
