@@ -123,7 +123,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	activityCh := make(chan struct{}, 1)
 	go serveTCPProxy(ctx, listener, targetAddr, logger, errCh, activityCh, metrics)
 
-	peerTimeout := time.Duration(3*wireguard.PersistentKeepalive) * time.Second
+	peerTimeout := 1 * time.Hour
 	logger.Info("waiting for peer connection", "peerTimeout", peerTimeout.String())
 
 	peerTimeoutCh := make(chan struct{})
