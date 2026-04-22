@@ -52,3 +52,10 @@ values:
     config:
       type: string
       default: "info"
+
+  gatewayDebug:
+    displayName: Gateway debug mode
+    description: Adds tcpdump (CAP_NET_RAW) to gateway pods for packet capture
+    config:
+      type: bool
+      default: "false"
