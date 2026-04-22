@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "tunnel-operator.fullname" . }}-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tunnel-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  podMetricsEndpoints:
+    - interval: 1m
+      port: metrics
+      scrapeTimeout: 10s
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: tunnel-operator

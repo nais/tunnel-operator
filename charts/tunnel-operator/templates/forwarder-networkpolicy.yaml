@@ -23,6 +23,13 @@ spec:
         - protocol: UDP
           port: {{ .Values.forwarder.portRange.min }}
           endPort: {{ .Values.forwarder.portRange.max }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
   egress:
     - ports:
         - protocol: UDP
