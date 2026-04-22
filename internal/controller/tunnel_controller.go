@@ -160,7 +160,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 					PeriodSeconds:       2,
 				},
 				SecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: new(false),
+					AllowPrivilegeEscalation: &gatewayDebug,
 					RunAsNonRoot:             new(true),
 					RunAsUser:                new(int64(65532)),
 					ReadOnlyRootFilesystem:   new(true),
@@ -521,6 +521,10 @@ func newPolicyException(name, namespace string) *unstructured.Unstructured {
 			map[string]any{
 				"policyName": "disallow-capabilities-strict",
 				"ruleNames":  []any{"adding-capabilities-strict", "autogen-adding-capabilities-strict"},
+			},
+			map[string]any{
+				"policyName": "disallow-privilege-escalation",
+				"ruleNames":  []any{"privilege-escalation", "autogen-privilege-escalation"},
 			},
 		},
 	}

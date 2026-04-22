@@ -344,6 +344,7 @@ var _ = Describe("Tunnel Controller", func() {
 			caps := pod.Spec.Containers[0].SecurityContext.Capabilities
 			Expect(caps.Drop).To(ContainElement(corev1.Capability("ALL")))
 			Expect(caps.Add).To(BeEmpty())
+			Expect(*pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(pod.Labels).NotTo(HaveKey("kyverno.policy.exclusion.nais.io/disallow-capabilities-strict"))
 		})
 
@@ -355,6 +356,7 @@ var _ = Describe("Tunnel Controller", func() {
 			caps := pod.Spec.Containers[0].SecurityContext.Capabilities
 			Expect(caps.Drop).To(ContainElement(corev1.Capability("ALL")))
 			Expect(caps.Add).To(ContainElement(corev1.Capability("NET_RAW")))
+			Expect(*pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation).To(BeTrue())
 			Expect(pod.Labels).To(HaveKeyWithValue("kyverno.policy.exclusion.nais.io/disallow-capabilities-strict", "true"))
 		})
 
@@ -377,9 +379,10 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(resources["namespaces"]).To(ContainElement("team-ns"))
 
 			exceptions := spec["exceptions"].([]any)
-			Expect(exceptions).To(HaveLen(2))
+			Expect(exceptions).To(HaveLen(3))
 			Expect(exceptions[0].(map[string]any)["policyName"]).To(Equal("disallow-capabilities"))
 			Expect(exceptions[1].(map[string]any)["policyName"]).To(Equal("disallow-capabilities-strict"))
+			Expect(exceptions[2].(map[string]any)["policyName"]).To(Equal("disallow-privilege-escalation"))
 		})
 	})
 })
