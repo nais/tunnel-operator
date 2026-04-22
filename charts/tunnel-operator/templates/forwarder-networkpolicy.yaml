@@ -30,12 +30,13 @@ spec:
         - protocol: TCP
           port: 53
     - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: tunnel-operator
       ports:
         - protocol: UDP
-          port: {{ .Values.forwarder.portRange.min }}
-          endPort: {{ .Values.forwarder.portRange.max }}
+          port: 51820
     - to:
         - podSelector:
             matchLabels:
