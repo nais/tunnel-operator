@@ -98,7 +98,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	publicKey := privateKey.PublicKey()
 	logger.Info("generated WireGuard keypair", "publicKey", publicKey.String())
 
-	logger.Info("creating WireGuard device", "listenPort", 51820)
+	logger.Info("creating WireGuard device", "listenPort", 51820, "gatewayPublicKey", publicKey.String(), "peerPublicKey", peerPublicKey.String())
 	dev, err := wireguard.NewDevice(privateKey, peerPublicKey, "", 51820, wireguard.TunnelIPGateway, parseLogLevel(os.Getenv("LOG_LEVEL")) == slog.LevelDebug)
 	if err != nil {
 		return fmt.Errorf("create WireGuard device: %w", err)
