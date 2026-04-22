@@ -90,6 +90,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 	if gatewayImage == "" {
 		gatewayImage = "ghcr.io/nais/tunnel-operator/gateway:latest"
 	}
+	gatewayDebug := os.Getenv("GATEWAY_DEBUG") == "true"
 
 	deadlineSeconds := int64(3600)
 	if tunnel.Spec.ActiveDeadlineSeconds != nil {
@@ -102,6 +103,9 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			return ctrl.Result{}, fmt.Errorf("getting gateway pod: %w", err)
 		}
 		pod.Labels = labels
+		if gatewayDebug {
+			pod.Labels["kyverno.policy.exclusion.nais.io/disallow-capabilities-strict"] = "true"
+		}
 		pod.Annotations = map[string]string{
 			"prometheus.io/scrape": "true",
 			"prometheus.io/port":   "9091",
@@ -158,9 +162,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 					SeccompProfile: &corev1.SeccompProfile{
 						Type: corev1.SeccompProfileTypeRuntimeDefault,
 					},
-					Capabilities: &corev1.Capabilities{
-						Drop: []corev1.Capability{"ALL"},
-					},
+					Capabilities: gatewayCapabilities(gatewayDebug),
 				},
 			}},
 		}
@@ -455,6 +457,16 @@ func gatewayLabels(tunnelName string) map[string]string {
 		"app.kubernetes.io/managed-by": "tunnel-operator",
 		"tunnels.nais.io/tunnel":       tunnelName,
 	}
+}
+
+func gatewayCapabilities(debug bool) *corev1.Capabilities {
+	caps := &corev1.Capabilities{
+		Drop: []corev1.Capability{"ALL"},
+	}
+	if debug {
+		caps.Add = []corev1.Capability{"NET_RAW"}
+	}
+	return caps
 }
 
 func intstrPtr(i int32) *intstr.IntOrString {

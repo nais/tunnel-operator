@@ -5,7 +5,8 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o gateway ./cmd/gateway/
 
-FROM scratch
+FROM alpine:3.21
+RUN apk add --no-cache tcpdump
 COPY --from=builder /build/gateway /gateway
 USER 65532:65532
 ENTRYPOINT ["/gateway"]

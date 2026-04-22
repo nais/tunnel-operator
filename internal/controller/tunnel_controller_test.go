@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"os"
 
 	"github.com/nais/tunnel-operator/pkg/portalloc"
 	. "github.com/onsi/ginkgo/v2"
@@ -44,6 +45,18 @@ var _ = Describe("Tunnel Controller", func() {
 				PortAllocator:       portalloc.New(20000, 20010),
 				ForwarderServiceKey: client.ObjectKey{Name: "test-forwarder", Namespace: namespace},
 			}
+		}
+
+		createAndReconcile := func() *corev1.Pod {
+			controllerReconciler := newReconciler()
+			_, err := controllerReconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+
+			pod := &corev1.Pod{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, pod)).To(Succeed())
+			return pod
 		}
 
 		BeforeEach(func() {
@@ -324,6 +337,25 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(tunnel.Status.Phase).To(Equal(v1alpha1.TunnelPhaseReady))
 			Expect(tunnel.Status.GatewayPublicKey).To(Equal("mock-gateway-public-key"))
 			Expect(tunnel.Status.Message).To(Equal("Gateway ready"))
+		})
+
+		It("should drop all capabilities by default", func() {
+			pod := createAndReconcile()
+			caps := pod.Spec.Containers[0].SecurityContext.Capabilities
+			Expect(caps.Drop).To(ContainElement(corev1.Capability("ALL")))
+			Expect(caps.Add).To(BeEmpty())
+			Expect(pod.Labels).NotTo(HaveKey("kyverno.policy.exclusion.nais.io/disallow-capabilities-strict"))
+		})
+
+		It("should add NET_RAW capability and kyverno exclusion label when GATEWAY_DEBUG is set", func() {
+			os.Setenv("GATEWAY_DEBUG", "true")
+			defer os.Unsetenv("GATEWAY_DEBUG")
+
+			pod := createAndReconcile()
+			caps := pod.Spec.Containers[0].SecurityContext.Capabilities
+			Expect(caps.Drop).To(ContainElement(corev1.Capability("ALL")))
+			Expect(caps.Add).To(ContainElement(corev1.Capability("NET_RAW")))
+			Expect(pod.Labels).To(HaveKeyWithValue("kyverno.policy.exclusion.nais.io/disallow-capabilities-strict", "true"))
 		})
 	})
 })
