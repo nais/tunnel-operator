@@ -23,16 +23,6 @@ rules:
   - list
   - watch
 - apiGroups:
-  - kyverno.io
-  resources:
-  - policyexceptions
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - watch
-- apiGroups:
   - nais.io
   resources:
   - tunnels

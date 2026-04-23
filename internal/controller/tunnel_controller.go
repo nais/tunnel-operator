@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,11 +17,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -51,7 +47,6 @@ type TunnelReconciler struct {
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
-//+kubebuilder:rbac:groups=kyverno.io,resources=policyexceptions,verbs=get;list;watch;create;delete
 
 func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
 	defer func() {
@@ -95,7 +90,6 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 	if gatewayImage == "" {
 		gatewayImage = "ghcr.io/nais/tunnel-operator/gateway:latest"
 	}
-	gatewayDebug := os.Getenv("GATEWAY_DEBUG") == "true"
 
 	deadlineSeconds := int64(3600)
 	if tunnel.Spec.ActiveDeadlineSeconds != nil {
@@ -108,9 +102,6 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			return ctrl.Result{}, fmt.Errorf("getting gateway pod: %w", err)
 		}
 		pod.Labels = labels
-		if gatewayDebug {
-			pod.Labels["kyverno.policy.exclusion.nais.io/disallow-capabilities-strict"] = "true"
-		}
 		pod.Annotations = map[string]string{
 			"prometheus.io/scrape": "true",
 			"prometheus.io/port":   "8090",
@@ -160,31 +151,21 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 					PeriodSeconds:       2,
 				},
 				SecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: &gatewayDebug,
+					AllowPrivilegeEscalation: new(bool),
 					RunAsNonRoot:             new(true),
 					RunAsUser:                new(int64(65532)),
 					ReadOnlyRootFilesystem:   new(true),
 					SeccompProfile: &corev1.SeccompProfile{
 						Type: corev1.SeccompProfileTypeRuntimeDefault,
 					},
-					Capabilities: gatewayCapabilities(gatewayDebug),
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{"ALL"},
+					},
 				},
 			}},
 		}
 		if err := controllerutil.SetControllerReference(tunnel, pod, r.Scheme); err != nil {
 			return ctrl.Result{}, fmt.Errorf("setting owner reference on pod: %w", err)
-		}
-
-		if gatewayDebug {
-			polex := newPolicyException(resourceName, tunnel.Namespace)
-			if err := controllerutil.SetControllerReference(tunnel, polex, r.Scheme); err != nil {
-				return ctrl.Result{}, fmt.Errorf("setting owner reference on policy exception: %w", err)
-			}
-			if err := r.Client.Create(ctx, polex); err != nil {
-				if !apierrors.IsAlreadyExists(err) && !isNoMatchError(err) {
-					return ctrl.Result{}, fmt.Errorf("creating policy exception: %w", err)
-				}
-			}
 		}
 
 		if err := r.Client.Create(ctx, pod); err != nil {
@@ -396,12 +377,9 @@ func (r *TunnelReconciler) deleteGatewayResources(ctx context.Context, tunnel *v
 		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}},
 	}
 
-	polex := newPolicyException(resourceName, tunnel.Namespace)
-	objects = append(objects, polex)
-
 	for _, obj := range objects {
 		if err := r.Client.Delete(ctx, obj); err != nil {
-			if !apierrors.IsNotFound(err) && !isNoMatchError(err) {
+			if !apierrors.IsNotFound(err) {
 				return fmt.Errorf("deleting %T: %w", obj, err)
 			}
 		}
@@ -503,55 +481,6 @@ func gatewayLabels(tunnelName string) map[string]string {
 	}
 }
 
-func gatewayCapabilities(debug bool) *corev1.Capabilities {
-	caps := &corev1.Capabilities{
-		Drop: []corev1.Capability{"ALL"},
-	}
-	if debug {
-		caps.Add = []corev1.Capability{"NET_RAW"}
-	}
-	return caps
-}
-
-func newPolicyException(name, namespace string) *unstructured.Unstructured {
-	polex := &unstructured.Unstructured{}
-	polex.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "kyverno.io",
-		Version: "v2",
-		Kind:    "PolicyException",
-	})
-	polex.SetName(name)
-	polex.SetNamespace(namespace)
-	polex.Object["spec"] = map[string]any{
-		"match": map[string]any{
-			"any": []any{
-				map[string]any{
-					"resources": map[string]any{
-						"kinds":      []any{"Pod"},
-						"names":      []any{name},
-						"namespaces": []any{namespace},
-					},
-				},
-			},
-		},
-		"exceptions": []any{
-			map[string]any{
-				"policyName": "disallow-capabilities",
-				"ruleNames":  []any{"adding-capabilities", "autogen-adding-capabilities"},
-			},
-			map[string]any{
-				"policyName": "disallow-capabilities-strict",
-				"ruleNames":  []any{"adding-capabilities-strict", "autogen-adding-capabilities-strict"},
-			},
-			map[string]any{
-				"policyName": "disallow-privilege-escalation",
-				"ruleNames":  []any{"privilege-escalation", "autogen-privilege-escalation"},
-			},
-		},
-	}
-	return polex
-}
-
 func intstrPtr(i int32) *intstr.IntOrString {
 	v := intstr.FromInt32(i)
 	return &v
@@ -565,12 +494,6 @@ func isPodReady(pod *corev1.Pod) bool {
 	}
 
 	return false
-}
-
-func isNoMatchError(err error) bool {
-	var noKind *meta.NoKindMatchError
-	var noResource *meta.NoResourceMatchError
-	return errors.As(err, &noKind) || errors.As(err, &noResource)
 }
 
 func (r *TunnelReconciler) SetupWithManager(mgr ctrl.Manager) error {

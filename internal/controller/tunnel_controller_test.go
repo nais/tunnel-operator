@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"os"
 
 	"github.com/nais/tunnel-operator/pkg/portalloc"
 	. "github.com/onsi/ginkgo/v2"
@@ -339,50 +338,12 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(tunnel.Status.Message).To(Equal("Gateway ready"))
 		})
 
-		It("should drop all capabilities by default", func() {
+		It("should drop all capabilities", func() {
 			pod := createAndReconcile()
 			caps := pod.Spec.Containers[0].SecurityContext.Capabilities
 			Expect(caps.Drop).To(ContainElement(corev1.Capability("ALL")))
-			Expect(caps.Add).To(BeEmpty())
+			Expect(caps.Add).To(BeNil())
 			Expect(*pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
-			Expect(pod.Labels).NotTo(HaveKey("kyverno.policy.exclusion.nais.io/disallow-capabilities-strict"))
-		})
-
-		It("should add NET_RAW capability and kyverno exclusion label when GATEWAY_DEBUG is set", func() {
-			os.Setenv("GATEWAY_DEBUG", "true")
-			defer os.Unsetenv("GATEWAY_DEBUG")
-
-			pod := createAndReconcile()
-			caps := pod.Spec.Containers[0].SecurityContext.Capabilities
-			Expect(caps.Drop).To(ContainElement(corev1.Capability("ALL")))
-			Expect(caps.Add).To(ContainElement(corev1.Capability("NET_RAW")))
-			Expect(*pod.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation).To(BeTrue())
-			Expect(pod.Labels).To(HaveKeyWithValue("kyverno.policy.exclusion.nais.io/disallow-capabilities-strict", "true"))
-		})
-
-		It("should build a PolicyException targeting the gateway pod", func() {
-			polex := newPolicyException("tunnel-gateway-test", "team-ns")
-
-			Expect(polex.GetKind()).To(Equal("PolicyException"))
-			Expect(polex.GetAPIVersion()).To(Equal("kyverno.io/v2"))
-			Expect(polex.GetName()).To(Equal("tunnel-gateway-test"))
-			Expect(polex.GetNamespace()).To(Equal("team-ns"))
-
-			spec, ok := polex.Object["spec"].(map[string]any)
-			Expect(ok).To(BeTrue())
-
-			match := spec["match"].(map[string]any)
-			anyRules := match["any"].([]any)
-			Expect(anyRules).To(HaveLen(1))
-			resources := anyRules[0].(map[string]any)["resources"].(map[string]any)
-			Expect(resources["names"]).To(ContainElement("tunnel-gateway-test"))
-			Expect(resources["namespaces"]).To(ContainElement("team-ns"))
-
-			exceptions := spec["exceptions"].([]any)
-			Expect(exceptions).To(HaveLen(3))
-			Expect(exceptions[0].(map[string]any)["policyName"]).To(Equal("disallow-capabilities"))
-			Expect(exceptions[1].(map[string]any)["policyName"]).To(Equal("disallow-capabilities-strict"))
-			Expect(exceptions[2].(map[string]any)["policyName"]).To(Equal("disallow-privilege-escalation"))
 		})
 	})
 })
