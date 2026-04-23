@@ -1,4 +1,4 @@
-{{- if .Values.forwarder.enabled }}
+{{- if and .Values.forwarder.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
