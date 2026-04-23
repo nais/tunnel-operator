@@ -27,7 +27,7 @@ spec:
               app.kubernetes.io/name: alloy
       ports:
         - protocol: TCP
-          port: 8090
+          port: metrics
   egress:
     - to:
         - namespaceSelector: {}

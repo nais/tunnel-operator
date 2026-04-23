@@ -234,7 +234,10 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 					Ports: []networkingv1.NetworkPolicyPort{
 						{
 							Protocol: new(corev1.ProtocolTCP),
-							Port:     intstrPtr(8090),
+							Port: &intstr.IntOrString{
+								Type:   intstr.String,
+								StrVal: "metrics",
+							},
 						},
 					},
 				},
