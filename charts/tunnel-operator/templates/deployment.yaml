@@ -45,10 +45,10 @@ spec:
           value: {{ .Values.gatewayDebug | default false | quote }}
         ports:
         - name: metrics
-          containerPort: 8080
+          containerPort: 8090
           protocol: TCP
         - name: health
-          containerPort: 8081
+          containerPort: 8085
           protocol: TCP
         - name: grpc
           containerPort: {{ .Values.grpc.port }}

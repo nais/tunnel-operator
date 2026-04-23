@@ -113,7 +113,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 		}
 		pod.Annotations = map[string]string{
 			"prometheus.io/scrape": "true",
-			"prometheus.io/port":   "9091",
+			"prometheus.io/port":   "8090",
 			"prometheus.io/path":   "/metrics",
 		}
 		pod.Spec = corev1.PodSpec{
@@ -137,7 +137,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 					},
 					{
 						Name:          "metrics",
-						ContainerPort: 9091,
+						ContainerPort: 8090,
 						Protocol:      corev1.ProtocolTCP,
 					},
 				},
@@ -216,7 +216,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 						},
 						{
 							Protocol: new(corev1.ProtocolTCP),
-							Port:     intstrPtr(9091),
+							Port:     intstrPtr(8090),
 						},
 					},
 				},

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -13,14 +14,16 @@ import (
 
 	"github.com/nais/tunnel-operator/pkg/forwarder"
 	forwarderv1 "github.com/nais/tunnel-operator/pkg/forwarder/proto/forwarder/v1"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
-	defaultHealthAddr = ":8080"
-	proxyIdleTimeout  = 5 * time.Minute
-	retryInterval     = 5 * time.Second
-	drainTimeout      = 30 * time.Second
-	fetchTimeout      = 10 * time.Second
+	defaultHealthAddr  = ":8085"
+	defaultMetricsAddr = ":8090"
+	proxyIdleTimeout   = 5 * time.Minute
+	retryInterval      = 5 * time.Second
+	drainTimeout       = 30 * time.Second
+	fetchTimeout       = 10 * time.Second
 )
 
 func main() {
@@ -48,6 +51,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 	operatorAddr := requireEnv("OPERATOR_GRPC_ADDR")
 	healthAddr := envOrDefault("HEALTH_ADDR", defaultHealthAddr)
+	metricsAddr := envOrDefault("METRICS_ADDR", defaultMetricsAddr)
 	lbVIP := strings.TrimSpace(os.Getenv("LB_VIP"))
 
 	proxy := forwarder.NewUDPProxy(proxyIdleTimeout)
@@ -65,7 +69,20 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	healthServer := forwarder.NewHealthServer(healthAddr)
 	go healthServer.Start(ctx)
 
-	logger.Info("forwarder starting", "operatorAddr", operatorAddr, "healthAddr", healthAddr, "lbVIP", lbVIP)
+	go func() {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", promhttp.Handler())
+		metricsServer := &http.Server{
+			Addr:              metricsAddr,
+			Handler:           metricsMux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("metrics server error", "addr", metricsAddr, "err", err)
+		}
+	}()
+
+	logger.Info("forwarder starting", "operatorAddr", operatorAddr, "healthAddr", healthAddr, "metricsAddr", metricsAddr, "lbVIP", lbVIP)
 
 	config, err := connectAndFetchConfig(ctx, configClient, operatorAddr, logger)
 	if err != nil {

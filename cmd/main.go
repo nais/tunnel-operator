@@ -49,9 +49,9 @@ func main() {
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), manager.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
-			BindAddress: ":8080",
+			BindAddress: ":8090",
 		},
-		HealthProbeBindAddress: ":8081",
+		HealthProbeBindAddress: ":8085",
 		LeaderElection:         false,
 		LeaderElectionID:       "tunnel-operator.nais.io",
 	})

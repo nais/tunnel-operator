@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type HealthServer struct {
@@ -22,7 +20,6 @@ func NewHealthServer(addr string) *HealthServer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", hs.handleHealthz)
 	mux.HandleFunc("/readyz", hs.handleReadyz)
-	mux.Handle("/metrics", promhttp.Handler())
 	hs.server = &http.Server{
 		Addr:              addr,
 		Handler:           mux,

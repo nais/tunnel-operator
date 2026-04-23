@@ -72,7 +72,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle("/metrics", promhttp.Handler())
 		metricsServer := &http.Server{
-			Addr:              ":9091",
+			Addr:              ":8090",
 			Handler:           metricsMux,
 			ReadHeaderTimeout: 5 * time.Second,
 		}

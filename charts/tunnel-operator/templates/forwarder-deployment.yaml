@@ -35,9 +35,14 @@ spec:
           value: {{ .Values.forwarder.healthAddr | quote }}
         - name: LOG_LEVEL
           value: {{ .Values.logLevel | default "info" | quote }}
+        - name: METRICS_ADDR
+          value: {{ .Values.forwarder.metricsAddr | default ":8090" | quote }}
         ports:
         - name: health
-          containerPort: 8080
+          containerPort: 8085
+          protocol: TCP
+        - name: metrics
+          containerPort: 8090
           protocol: TCP
         livenessProbe:
           httpGet:
