@@ -214,6 +214,24 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 							Protocol: new(corev1.ProtocolTCP),
 							Port:     intstrPtr(int32(gatewayStatusPort)),
 						},
+					},
+				},
+				{
+					From: []networkingv1.NetworkPolicyPeer{
+						{
+							NamespaceSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"kubernetes.io/metadata.name": "nais-system",
+								},
+							},
+							PodSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"app.kubernetes.io/name": "alloy",
+								},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
 						{
 							Protocol: new(corev1.ProtocolTCP),
 							Port:     intstrPtr(8090),

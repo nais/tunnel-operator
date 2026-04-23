@@ -24,10 +24,10 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: prometheus
+              app.kubernetes.io/name: alloy
       ports:
         - protocol: TCP
-          port: 8080
+          port: 8090
   egress:
     - to:
         - namespaceSelector: {}
