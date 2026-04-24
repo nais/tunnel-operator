@@ -226,7 +226,8 @@ func handleConn(src net.Conn, targetAddr string, logger *slog.Logger, m *gateway
 }
 
 func copyAndClose(dst, src net.Conn) (int64, error) {
-	n, err := io.Copy(dst, src)
+	buf := make([]byte, 128<<10)
+	n, err := io.CopyBuffer(dst, src, buf)
 	if tc, ok := dst.(interface{ CloseWrite() error }); ok {
 		_ = tc.CloseWrite()
 	}

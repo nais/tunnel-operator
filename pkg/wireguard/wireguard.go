@@ -13,7 +13,9 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 )
 
 const (
@@ -98,7 +100,9 @@ allowed_ip=0.0.0.0/0
 		return nil, fmt.Errorf("bring up wireguard device: %w", err)
 	}
 
-	return &Device{dev: dev, net: net, tun: tun}, nil
+	d := &Device{dev: dev, net: net, tun: tun}
+	tuneStack(d.Stack())
+	return d, nil
 }
 
 // Net returns the netstack network for creating TCP connections through the tunnel.
@@ -129,6 +133,28 @@ func (d *Device) Close() {
 
 func encodeKey(key wgtypes.Key) string {
 	return hex.EncodeToString(key[:])
+}
+
+// tuneStack adjusts gVisor netstack TCP parameters for better throughput.
+// Buffer max sizes match Tailscale's production values (tailscale/tailscale#12994).
+// RACK is disabled due to a gVisor bug that causes spurious retransmissions
+// and congestion window collapse (tailscale/tailscale#9707).
+func tuneStack(s *stack.Stack) {
+	if s == nil {
+		return
+	}
+	s.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPReceiveBufferSizeRangeOption{
+		Min:     tcp.MinBufferSize,
+		Default: tcp.DefaultReceiveBufferSize,
+		Max:     8 << 20, // 8MiB
+	})
+	s.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPSendBufferSizeRangeOption{
+		Min:     tcp.MinBufferSize,
+		Default: tcp.DefaultSendBufferSize,
+		Max:     6 << 20, // 6MiB
+	})
+	rackOpt := tcpip.TCPRecovery(0)
+	s.SetTransportProtocolOption(tcp.ProtocolNumber, &rackOpt)
 }
 
 func slogDeviceLogger(logger *slog.Logger) *device.Logger {
