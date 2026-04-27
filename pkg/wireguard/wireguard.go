@@ -59,7 +59,7 @@ func newDevice(
 	tun, net, err := netstack.CreateNetTUN(
 		[]netip.Addr{prefix.Addr()},
 		[]netip.Addr{},
-		1420,
+		1400, // GKE VPC MTU is 1460; WireGuard overhead is 60 bytes (20 IPv4 + 8 UDP + 32 WG)
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create netstack TUN: %w", err)
