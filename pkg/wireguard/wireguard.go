@@ -6,12 +6,16 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"unsafe"
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 )
 
 const (
@@ -91,7 +95,35 @@ allowed_ip=0.0.0.0/0
 		return nil, fmt.Errorf("bring up wireguard device: %w", err)
 	}
 
-	return &Device{dev: dev, net: net, tun: tun}, nil
+	d := &Device{dev: dev, net: net, tun: tun}
+	tuneStack((*netstackView)(unsafe.Pointer(net)).stack)
+	return d, nil
+}
+
+// netstackView mirrors the memory layout of netstack.Net to access the unexported stack field.
+type netstackView struct {
+	_     unsafe.Pointer
+	stack *stack.Stack
+}
+
+// tuneStack adjusts gVisor netstack TCP parameters for better throughput.
+func tuneStack(s *stack.Stack) {
+	if s == nil {
+		return
+	}
+	s.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPReceiveBufferSizeRangeOption{
+		Min:     tcp.MinBufferSize,
+		Default: tcp.DefaultReceiveBufferSize,
+		Max:     8 << 20, // 8MiB — Tailscale production value (tailscale/tailscale#12994)
+	})
+	s.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPSendBufferSizeRangeOption{
+		Min:     tcp.MinBufferSize,
+		Default: tcp.DefaultSendBufferSize,
+		Max:     6 << 20, // 6MiB
+	})
+	// RACK disabled: gVisor bug causes spurious retransmissions (tailscale/tailscale#9707)
+	rackOpt := tcpip.TCPRecovery(0)
+	s.SetTransportProtocolOption(tcp.ProtocolNumber, &rackOpt)
 }
 
 // Net returns the netstack network for creating TCP connections through the tunnel.
