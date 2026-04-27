@@ -81,14 +81,16 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 
 	if !controllerutil.ContainsFinalizer(tunnel, finalizerName) {
 		controllerutil.AddFinalizer(tunnel, finalizerName)
-		return ctrl.Result{}, r.Client.Update(ctx, tunnel)
+		if err := r.Client.Update(ctx, tunnel); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	resourceName := gatewayResourceName(tunnel.Name)
 	labels := gatewayLabels(tunnel.Name)
 	gatewayImage := os.Getenv("GATEWAY_IMAGE")
 	if gatewayImage == "" {
-		gatewayImage = "ghcr.io/nais/tunnel-operator/gateway:latest"
+		gatewayImage = "europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-gateway:latest"
 	}
 
 	deadlineSeconds := int64(3600)
@@ -118,8 +120,9 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 				},
 			},
 			Containers: []corev1.Container{{
-				Name:  "gateway",
-				Image: gatewayImage,
+				Name:            "gateway",
+				Image:           gatewayImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
 				Ports: []corev1.ContainerPort{
 					{
 						Name:          "status",
@@ -147,8 +150,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 							Port: intstr.FromInt32(int32(gatewayStatusPort)),
 						},
 					},
-					InitialDelaySeconds: 1,
-					PeriodSeconds:       2,
+					PeriodSeconds: 1,
 				},
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: new(bool),
