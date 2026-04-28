@@ -88,6 +88,54 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 
 	resourceName := gatewayResourceName(tunnel.Name)
 	labels := gatewayLabels(tunnel.Name)
+
+	pod, err := r.ensureGatewayPod(ctx, tunnel, resourceName, labels)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.ensureNetworkPolicy(ctx, tunnel, resourceName, labels); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	statusBase := tunnel.DeepCopy()
+	updated := false
+	updateType := forwarderv1.UpdateType_MODIFIED
+	if tunnel.Status.ForwarderPort == 0 && r.PortAllocator != nil {
+		allocatedPort, err := r.PortAllocator.Allocate(tunnelKey(tunnel))
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("allocating forwarder port: %w", err)
+		}
+		tunnel.Status.ForwarderPort = allocatedPort
+		portAllocationsActive.Inc()
+		updated = true
+		updateType = forwarderv1.UpdateType_ADDED
+	}
+	if tunnel.Status.GatewayPodName != resourceName {
+		tunnel.Status.GatewayPodName = resourceName
+		updated = true
+	}
+
+	phaseUpdated, requeueAfter := r.evaluatePodPhase(ctx, tunnel, pod)
+	updated = updated || phaseUpdated
+
+	if updated {
+		if err := r.Client.Status().Patch(ctx, tunnel, client.MergeFrom(statusBase)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("updating tunnel status: %w", err)
+		}
+		tunnelsActive.WithLabelValues(string(tunnel.Status.Phase), tunnel.Namespace).Inc()
+		r.notifyTunnelUpdate(ctx, tunnel, updateType)
+	}
+
+	logger.Info("reconciled tunnel", "tunnel", req.NamespacedName, "pod", resourceName)
+
+	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+func (r *TunnelReconciler) ensureGatewayPod(
+	ctx context.Context, tunnel *v1alpha1.Tunnel,
+	resourceName string, labels map[string]string,
+) (*corev1.Pod, error) {
 	gatewayImage := os.Getenv("GATEWAY_IMAGE")
 	if gatewayImage == "" {
 		gatewayImage = "europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-gateway:latest"
@@ -101,7 +149,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
 	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("getting gateway pod: %w", err)
+			return nil, fmt.Errorf("getting gateway pod: %w", err)
 		}
 		pod.Labels = labels
 		pod.Annotations = map[string]string{
@@ -109,74 +157,85 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			"prometheus.io/port":   "8090",
 			"prometheus.io/path":   "/metrics",
 		}
-		pod.Spec = corev1.PodSpec{
-			RestartPolicy:         corev1.RestartPolicyNever,
-			ActiveDeadlineSeconds: &deadlineSeconds,
-			SecurityContext: &corev1.PodSecurityContext{
-				RunAsNonRoot: new(true),
-				RunAsUser:    new(int64(65532)),
-				SeccompProfile: &corev1.SeccompProfile{
-					Type: corev1.SeccompProfileTypeRuntimeDefault,
-				},
-			},
-			Containers: []corev1.Container{{
-				Name:            "gateway",
-				Image:           gatewayImage,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				Ports: []corev1.ContainerPort{
-					{
-						Name:          "status",
-						ContainerPort: int32(gatewayStatusPort),
-						Protocol:      corev1.ProtocolTCP,
-					},
-					{
-						Name:          "metrics",
-						ContainerPort: 8090,
-						Protocol:      corev1.ProtocolTCP,
-					},
-				},
-				Env: []corev1.EnvVar{
-					{Name: "TUNNEL_PEER_PUBLIC_KEY", Value: tunnel.Spec.ClientPublicKey},
-					{Name: "TUNNEL_TARGET_HOST", Value: tunnel.Spec.Target.Host},
-					{Name: "TUNNEL_TARGET_PORT", Value: strconv.Itoa(int(tunnel.Spec.Target.Port))},
-					{Name: "TUNNEL_NAME", Value: tunnel.Name},
-					{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
-					{Name: "LOG_LEVEL", Value: os.Getenv("LOG_LEVEL")},
-				},
-				ReadinessProbe: &corev1.Probe{
-					ProbeHandler: corev1.ProbeHandler{
-						HTTPGet: &corev1.HTTPGetAction{
-							Path: "/status",
-							Port: intstr.FromInt32(int32(gatewayStatusPort)),
-						},
-					},
-					PeriodSeconds: 1,
-				},
-				SecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: new(bool),
-					RunAsNonRoot:             new(true),
-					RunAsUser:                new(int64(65532)),
-					ReadOnlyRootFilesystem:   new(true),
-					SeccompProfile: &corev1.SeccompProfile{
-						Type: corev1.SeccompProfileTypeRuntimeDefault,
-					},
-					Capabilities: &corev1.Capabilities{
-						Drop: []corev1.Capability{"ALL"},
-					},
-				},
-			}},
-		}
+		pod.Spec = gatewayPodSpec(tunnel, gatewayImage, deadlineSeconds)
 		if err := controllerutil.SetControllerReference(tunnel, pod, r.Scheme); err != nil {
-			return ctrl.Result{}, fmt.Errorf("setting owner reference on pod: %w", err)
+			return nil, fmt.Errorf("setting owner reference on pod: %w", err)
 		}
 
 		if err := r.Client.Create(ctx, pod); err != nil {
-			return ctrl.Result{}, fmt.Errorf("creating gateway pod: %w", err)
+			return nil, fmt.Errorf("creating gateway pod: %w", err)
 		}
 	}
 
+	return pod, nil
+}
+
+func gatewayPodSpec(tunnel *v1alpha1.Tunnel, image string, deadlineSeconds int64) corev1.PodSpec {
+	return corev1.PodSpec{
+		RestartPolicy:         corev1.RestartPolicyNever,
+		ActiveDeadlineSeconds: &deadlineSeconds,
+		SecurityContext: &corev1.PodSecurityContext{
+			RunAsNonRoot: new(true),
+			RunAsUser:    new(int64(65532)),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		Containers: []corev1.Container{{
+			Name:            "gateway",
+			Image:           image,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Ports: []corev1.ContainerPort{
+				{
+					Name:          "status",
+					ContainerPort: int32(gatewayStatusPort),
+					Protocol:      corev1.ProtocolTCP,
+				},
+				{
+					Name:          "metrics",
+					ContainerPort: 8090,
+					Protocol:      corev1.ProtocolTCP,
+				},
+			},
+			Env: []corev1.EnvVar{
+				{Name: "TUNNEL_PEER_PUBLIC_KEY", Value: tunnel.Spec.ClientPublicKey},
+				{Name: "TUNNEL_TARGET_HOST", Value: tunnel.Spec.Target.Host},
+				{Name: "TUNNEL_TARGET_PORT", Value: strconv.Itoa(int(tunnel.Spec.Target.Port))},
+				{Name: "TUNNEL_NAME", Value: tunnel.Name},
+				{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
+				{Name: "LOG_LEVEL", Value: os.Getenv("LOG_LEVEL")},
+			},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: "/status",
+						Port: intstr.FromInt32(int32(gatewayStatusPort)),
+					},
+				},
+				PeriodSeconds: 1,
+			},
+			SecurityContext: &corev1.SecurityContext{
+				AllowPrivilegeEscalation: new(bool),
+				RunAsNonRoot:             new(true),
+				RunAsUser:                new(int64(65532)),
+				ReadOnlyRootFilesystem:   new(true),
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+				Capabilities: &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				},
+			},
+		}},
+	}
+}
+
+func (r *TunnelReconciler) ensureNetworkPolicy(
+	ctx context.Context, tunnel *v1alpha1.Tunnel,
+	resourceName string, labels map[string]string,
+) error {
 	networkPolicy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: tunnel.Namespace}}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, networkPolicy, func() error {
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, networkPolicy, func() error {
 		networkPolicy.Labels = labels
 		networkPolicy.Spec = networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{
@@ -243,29 +302,16 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			},
 		}
 		return controllerutil.SetControllerReference(tunnel, networkPolicy, r.Scheme)
-	}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("reconciling networkpolicy: %w", err)
+	})
+	if err != nil {
+		return fmt.Errorf("reconciling networkpolicy: %w", err)
 	}
+	return nil
+}
 
-	statusBase := tunnel.DeepCopy()
-	updated := false
-	var requeueAfter time.Duration
-	updateType := forwarderv1.UpdateType_MODIFIED
-	if tunnel.Status.ForwarderPort == 0 && r.PortAllocator != nil {
-		allocatedPort, err := r.PortAllocator.Allocate(tunnelKey(tunnel))
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("allocating forwarder port: %w", err)
-		}
-		tunnel.Status.ForwarderPort = allocatedPort
-		portAllocationsActive.Inc()
-		updated = true
-		updateType = forwarderv1.UpdateType_ADDED
-	}
-	if tunnel.Status.GatewayPodName != resourceName {
-		tunnel.Status.GatewayPodName = resourceName
-		updated = true
-	}
-
+func (r *TunnelReconciler) evaluatePodPhase(
+	ctx context.Context, tunnel *v1alpha1.Tunnel, pod *corev1.Pod,
+) (updated bool, requeueAfter time.Duration) {
 	switch {
 	case pod.Status.Phase == corev1.PodFailed:
 		if tunnel.Status.Phase != v1alpha1.TunnelPhaseFailed {
@@ -280,38 +326,9 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			updated = true
 		}
 	case isPodReady(pod):
-		fetcher := r.FetchGatewayStatus
-		if fetcher == nil {
-			fetcher = defaultFetchGatewayStatus
-		}
-		if pod.Status.PodIP != "" {
-			pubKey, err := fetcher(pod.Status.PodIP)
-			if err != nil {
-				logger.Info("gateway status not yet available", "err", err)
-				requeueAfter = 2 * time.Second
-			} else if pubKey != "" {
-				if tunnel.Status.GatewayPublicKey != pubKey {
-					tunnel.Status.GatewayPublicKey = pubKey
-					updated = true
-				}
-				if tunnel.Status.Phase != v1alpha1.TunnelPhaseReady {
-					tunnel.Status.Phase = v1alpha1.TunnelPhaseReady
-					tunnel.Status.Message = "Gateway ready"
-					updated = true
-				}
-			}
-		}
-		vip, err := r.resolveForwarderVIP(ctx)
-		if err == nil && vip != "" {
-			forwarderEndpoint := net.JoinHostPort(vip, strconv.Itoa(int(tunnel.Status.ForwarderPort)))
-			if tunnel.Status.ForwarderEndpoint != forwarderEndpoint {
-				tunnel.Status.ForwarderEndpoint = forwarderEndpoint
-				updated = true
-			}
-		} else if err != nil {
-			logger.Info("forwarder VIP not yet available", "err", err)
-			requeueAfter = 2 * time.Second
-		}
+		u, r2 := r.handleReadyPod(ctx, tunnel, pod)
+		updated = updated || u
+		requeueAfter = r2
 	default:
 		if tunnel.Status.Phase == "" || tunnel.Status.Phase == v1alpha1.TunnelPhasePending {
 			tunnel.Status.Phase = v1alpha1.TunnelPhaseProvisioning
@@ -320,17 +337,48 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 		}
 	}
 
-	if updated {
-		if err := r.Client.Status().Patch(ctx, tunnel, client.MergeFrom(statusBase)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("updating tunnel status: %w", err)
+	return updated, requeueAfter
+}
+
+func (r *TunnelReconciler) handleReadyPod(
+	ctx context.Context, tunnel *v1alpha1.Tunnel, pod *corev1.Pod,
+) (updated bool, requeueAfter time.Duration) {
+	logger := log.FromContext(ctx)
+
+	fetcher := r.FetchGatewayStatus
+	if fetcher == nil {
+		fetcher = defaultFetchGatewayStatus
+	}
+	if pod.Status.PodIP != "" {
+		pubKey, err := fetcher(pod.Status.PodIP)
+		if err != nil {
+			logger.Info("gateway status not yet available", "err", err)
+			requeueAfter = 2 * time.Second
+		} else if pubKey != "" {
+			if tunnel.Status.GatewayPublicKey != pubKey {
+				tunnel.Status.GatewayPublicKey = pubKey
+				updated = true
+			}
+			if tunnel.Status.Phase != v1alpha1.TunnelPhaseReady {
+				tunnel.Status.Phase = v1alpha1.TunnelPhaseReady
+				tunnel.Status.Message = "Gateway ready"
+				updated = true
+			}
 		}
-		tunnelsActive.WithLabelValues(string(tunnel.Status.Phase), tunnel.Namespace).Inc()
-		r.notifyTunnelUpdate(ctx, tunnel, updateType)
+	}
+	vip, err := r.resolveForwarderVIP(ctx)
+	if err == nil && vip != "" {
+		endpoint := net.JoinHostPort(vip, strconv.Itoa(int(tunnel.Status.ForwarderPort)))
+		if tunnel.Status.ForwarderEndpoint != endpoint {
+			tunnel.Status.ForwarderEndpoint = endpoint
+			updated = true
+		}
+	} else if err != nil {
+		logger.Info("forwarder VIP not yet available", "err", err)
+		requeueAfter = 2 * time.Second
 	}
 
-	logger.Info("reconciled tunnel", "tunnel", req.NamespacedName, "pod", resourceName)
-
-	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+	return updated, requeueAfter
 }
 
 func (r *TunnelReconciler) handleDeletion(ctx context.Context, tunnel *v1alpha1.Tunnel) error {
@@ -452,7 +500,7 @@ func defaultFetchGatewayStatus(podIP string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("gateway not ready: HTTP %d", resp.StatusCode)

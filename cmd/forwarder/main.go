@@ -82,7 +82,12 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		}
 	}()
 
-	logger.Info("forwarder starting", "operatorAddr", operatorAddr, "healthAddr", healthAddr, "metricsAddr", metricsAddr, "lbVIP", lbVIP)
+	logger.Info("forwarder starting",
+		"operatorAddr", operatorAddr,
+		"healthAddr", healthAddr,
+		"metricsAddr", metricsAddr,
+		"lbVIP", lbVIP,
+	)
 
 	config, err := connectAndFetchConfig(ctx, configClient, operatorAddr, logger)
 	if err != nil {

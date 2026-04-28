@@ -76,7 +76,10 @@ func (p *UDPProxy) AddMapping(ctx context.Context, port int, gatewayAddr, tunnel
 	p.mappings[port] = pl
 	p.mu.Unlock()
 
-	slog.Info("listening on port", "port", port, "gateway", gatewayAddr, "tunnel", tunnelName, "namespace", tunnelNamespace)
+	slog.Info("listening on port",
+		"port", port, "gateway", gatewayAddr,
+		"tunnel", tunnelName, "namespace", tunnelNamespace,
+	)
 	go p.servePort(ctx, pl)
 	go p.cleanupIdleSessions(ctx, pl)
 
@@ -140,21 +143,31 @@ func (p *UDPProxy) servePort(ctx context.Context, listener *portListener) {
 			continue
 		}
 
-		slog.Debug("received UDP packet", "port", listener.conn.LocalAddr().(*net.UDPAddr).Port, "from", clientAddr.String(), "bytes", n)
+		port := listener.conn.LocalAddr().(*net.UDPAddr).Port
+		slog.Debug("received UDP packet",
+			"port", port, "from", clientAddr.String(), "bytes", n,
+		)
 
 		session, err := p.getOrCreateSession(listener, clientAddr)
 		if err != nil {
-			slog.Error("failed to create session", "port", listener.conn.LocalAddr().(*net.UDPAddr).Port, "from", clientAddr.String(), "gateway", listener.gateway, "err", err)
+			slog.Error("failed to create session",
+				"port", port, "from", clientAddr.String(),
+				"gateway", listener.gateway, "err", err,
+			)
 			continue
 		}
 
 		session.Touch()
 		if _, err := session.upstreamConn.Write(buf[:n]); err != nil {
-			slog.Error("failed to forward to gateway", "port", listener.conn.LocalAddr().(*net.UDPAddr).Port, "gateway", listener.gateway, "err", err)
+			slog.Error("failed to forward to gateway",
+				"port", port, "gateway", listener.gateway, "err", err,
+			)
 			listener.sessions.Delete(clientAddr.String())
 			_ = session.upstreamConn.Close()
 		} else {
-			slog.Debug("forwarded to gateway", "port", listener.conn.LocalAddr().(*net.UDPAddr).Port, "gateway", listener.gateway, "bytes", n)
+			slog.Debug("forwarded to gateway",
+				"port", port, "gateway", listener.gateway, "bytes", n,
+			)
 			PacketsTotal.WithLabelValues(listener.tunnelName, listener.tunnelNamespace, DirectionClientToGateway).Inc()
 			BytesTotal.WithLabelValues(listener.tunnelName, listener.tunnelNamespace, DirectionClientToGateway).Add(float64(n))
 		}
@@ -177,7 +190,11 @@ func (p *UDPProxy) getOrCreateSession(listener *portListener, clientAddr *net.UD
 		return nil, fmt.Errorf("dial gateway %q: %w", listener.gateway, err)
 	}
 
-	slog.Info("new session", "port", listener.conn.LocalAddr().(*net.UDPAddr).Port, "client", clientAddr.String(), "gateway", listener.gateway, "tunnel", listener.tunnelName)
+	slog.Info("new session",
+		"port", listener.conn.LocalAddr().(*net.UDPAddr).Port,
+		"client", clientAddr.String(),
+		"gateway", listener.gateway, "tunnel", listener.tunnelName,
+	)
 
 	session := NewSession(clientAddr, upstreamConn)
 	listener.sessions.Set(key, session)
@@ -202,12 +219,18 @@ func (p *UDPProxy) pipeResponses(listener *portListener, key string, session *Se
 
 		session.Touch()
 		if _, err := listener.conn.WriteToUDP(buf[:n], session.clientAddr); err != nil {
-			slog.Error("failed to send response to client", "tunnel", listener.tunnelName, "client", session.clientAddr.String(), "err", err)
+			slog.Error("failed to send response to client",
+				"tunnel", listener.tunnelName,
+				"client", session.clientAddr.String(), "err", err,
+			)
 			listener.sessions.Delete(key)
 			_ = session.upstreamConn.Close()
 			return
 		}
-		slog.Debug("forwarded response to client", "tunnel", listener.tunnelName, "client", session.clientAddr.String(), "bytes", n)
+		slog.Debug("forwarded response to client",
+			"tunnel", listener.tunnelName,
+			"client", session.clientAddr.String(), "bytes", n,
+		)
 		PacketsTotal.WithLabelValues(listener.tunnelName, listener.tunnelNamespace, DirectionGatewayToClient).Inc()
 		BytesTotal.WithLabelValues(listener.tunnelName, listener.tunnelNamespace, DirectionGatewayToClient).Add(float64(n))
 	}
