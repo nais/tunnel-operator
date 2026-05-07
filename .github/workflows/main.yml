@@ -261,8 +261,8 @@ jobs:
             helm push "$chart" oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature
           done
 
-  rollout:
-    name: Rollout
+  deploy:
+    name: Deploy
     if: github.actor != 'dependabot[bot]' && github.ref == 'refs/heads/main'
     needs:
       - checks
@@ -273,11 +273,12 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: nais/fasit-deploy@v3 # ratchet:exclude
+      - uses: nais/fasit-deploy@97187355184a7f0f4b7a36a2b49a86ce02240f7b # ratchet:nais/fasit-deploy@v4.0.0
         if: github.ref == 'refs/heads/main'
         with:
           chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator
           version: ${{ needs.build.outputs.version }}
-          skip-ci: true
-          target: |
-            {"kind": "tenant", "tenant": "dev-nais"}
+          targets: |
+            [
+              { "target": { "kind": "tenant", "tenant": "dev-nais" } }
+            ]
