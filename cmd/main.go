@@ -18,6 +18,9 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	crlog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -55,6 +58,15 @@ func main() {
 		HealthProbeBindAddress: ":8085",
 		LeaderElection:         false,
 		LeaderElectionID:       "tunnel-operator.nais.io",
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Pod{}: {
+					Label: labels.SelectorFromSet(labels.Set{
+						"app.kubernetes.io/managed-by": "tunnel-operator",
+					}),
+				},
+			},
+		},
 	})
 	if err != nil {
 		slog.Error("unable to create manager", "error", err)
