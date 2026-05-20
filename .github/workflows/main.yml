@@ -281,4 +281,4 @@ jobs:
           chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator
           version: ${{ needs.build.outputs.version }}
           targets: |
-            {"kind": "tenant"}
+            [{target: {"kind": "tenant"}}]
