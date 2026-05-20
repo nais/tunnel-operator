@@ -145,7 +145,9 @@ jobs:
             --set image.repository=tunnel-operator \
             --set image.tag=ci \
             --set image.pullPolicy=Never \
-            --set gatewayImage=tunnel-operator-gateway:ci \
+            --set gateway.image.repository=tunnel-operator-gateway \
+            --set gateway.image.tag=ci \
+            --set gateway.image.pullPolicy=Never \
             --set forwarder.image.repository=tunnel-operator-forwarder \
             --set forwarder.image.tag=ci \
             --set forwarder.image.pullPolicy=Never
