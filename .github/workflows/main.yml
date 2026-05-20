@@ -273,12 +273,10 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: nais/fasit-deploy@97187355184a7f0f4b7a36a2b49a86ce02240f7b # ratchet:nais/fasit-deploy@v4.0.0
+      - uses: nais/fasit-deploy@97187355184a7f0f4b7a36a2b49a86ce02240f7b # ratchet:nais/fasit-deploy@v4.0.1
         if: github.ref == 'refs/heads/main'
         with:
           chart: oci://${{ env.GOOGLE_REGISTRY }}/nais-io/nais/feature/tunnel-operator
           version: ${{ needs.build.outputs.version }}
           targets: |
-            [
-              { "target": { "kind": "tenant", "tenant": "dev-nais" } }
-            ]
+            {"kind": "tenant"}
