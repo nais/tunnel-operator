@@ -45,6 +45,7 @@ func main() {
 	}
 	forwarderServiceName := os.Getenv("FORWARDER_SERVICE_NAME")
 	podNamespace := os.Getenv("POD_NAMESPACE")
+	forwarderVIP := strings.TrimSpace(os.Getenv("LB_VIP"))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), manager.Options{
 		Scheme: scheme,
@@ -71,6 +72,7 @@ func main() {
 		PortAllocator:       allocator,
 		ForwarderServer:     grpcServer,
 		ForwarderServiceKey: forwarderServiceKey,
+		ForwarderVIP:        forwarderVIP,
 	}).SetupWithManager(mgr); err != nil {
 		slog.Error("unable to create controller", "controller", "Tunnel", "error", err)
 		os.Exit(1)

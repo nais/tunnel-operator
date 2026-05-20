@@ -38,6 +38,7 @@ type TunnelReconciler struct {
 	PortAllocator       *portalloc.PortAllocator
 	ForwarderServer     *operatorgrpc.ForwarderServer
 	ForwarderServiceKey client.ObjectKey
+	ForwarderVIP        string // static override; skips service lookup when set
 	FetchGatewayStatus  func(podIP string) (string, error)
 }
 
@@ -439,6 +440,10 @@ func (r *TunnelReconciler) deleteGatewayResources(ctx context.Context, tunnel *v
 }
 
 func (r *TunnelReconciler) resolveForwarderVIP(ctx context.Context) (string, error) {
+	if r.ForwarderVIP != "" {
+		return r.ForwarderVIP, nil
+	}
+
 	if r.Client == nil || r.ForwarderServiceKey.Name == "" {
 		return "", fmt.Errorf("forwarder service not configured")
 	}
