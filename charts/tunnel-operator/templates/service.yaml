@@ -18,3 +18,4 @@ spec:
     protocol: TCP
   selector:
     {{- include "tunnel-operator.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: operator

@@ -14,6 +14,7 @@ spec:
     metadata:
       labels:
         {{- include "tunnel-operator.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: operator
     spec:
       serviceAccountName: {{ include "tunnel-operator.serviceAccountName" . }}
       securityContext:
