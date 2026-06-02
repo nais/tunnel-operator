@@ -65,6 +65,11 @@ func main() {
 						"app.kubernetes.io/managed-by": "tunnel-operator",
 					}),
 				},
+				&corev1.Service{}: {
+					Namespaces: map[string]cache.Config{
+						podNamespace: {},
+					},
+				},
 			},
 		},
 	})
