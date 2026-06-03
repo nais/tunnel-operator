@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-logr/logr"
 	operatorgrpc "github.com/nais/tunnel-operator/internal/grpc"
+	_ "go.uber.org/automaxprocs" // set GOMAXPROCS from the CFS quota to avoid CPU throttling stalls
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	naisiov1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"

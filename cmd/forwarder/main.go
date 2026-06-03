@@ -15,6 +15,7 @@ import (
 	"github.com/nais/tunnel-operator/pkg/forwarder"
 	forwarderv1 "github.com/nais/tunnel-operator/pkg/forwarder/proto/forwarder/v1"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	_ "go.uber.org/automaxprocs" // set GOMAXPROCS from the CFS quota to avoid CPU throttling stalls
 )
 
 const (
