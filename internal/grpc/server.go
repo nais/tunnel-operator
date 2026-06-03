@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -39,6 +40,7 @@ func NewForwarderServer(client client.Client, allocator *portalloc.PortAllocator
 }
 
 func (s *ForwarderServer) GetConfig(ctx context.Context, _ *forwarderv1.GetConfigRequest) (*forwarderv1.ForwarderConfig, error) {
+	slog.Info("GetConfig called")
 	tunnels := &v1alpha1.TunnelList{}
 	if err := s.client.List(ctx, tunnels); err != nil {
 		return nil, fmt.Errorf("listing tunnels: %w", err)

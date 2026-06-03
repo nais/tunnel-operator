@@ -23,7 +23,7 @@ const (
 	proxyIdleTimeout   = 5 * time.Minute
 	retryInterval      = 5 * time.Second
 	drainTimeout       = 30 * time.Second
-	fetchTimeout       = 10 * time.Second
+	fetchTimeout       = 30 * time.Second
 )
 
 func main() {
