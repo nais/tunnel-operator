@@ -56,6 +56,10 @@ forwarder:
   portRange:
     min: 51820
     max: 51919
+  # Allow inbound WireGuard UDP from any source (0.0.0.0/0) across the port range.
+  # On GKE Dataplane V2 this compiles to an expensive endpoint policy; set false to
+  # test whether it's what blocks BPF policy-map programming under identity pressure.
+  allowWireguardIngress: true
   grpcAddr: "tunnel-operator:9090"
   healthAddr: ":8085"
   metricsAddr: ":8090"

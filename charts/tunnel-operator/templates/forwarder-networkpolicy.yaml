@@ -16,6 +16,7 @@ spec:
     - Ingress
     - Egress
   ingress:
+{{- if .Values.forwarder.allowWireguardIngress }}
     - from:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -23,6 +24,7 @@ spec:
         - protocol: UDP
           port: {{ .Values.forwarder.portRange.min }}
           endPort: {{ .Values.forwarder.portRange.max }}
+{{- end }}
     - from:
         - podSelector:
             matchLabels:

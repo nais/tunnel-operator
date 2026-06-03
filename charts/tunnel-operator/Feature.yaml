@@ -59,3 +59,10 @@ values:
     config:
       type: bool
       default: "false"
+
+  forwarder.allowWireguardIngress:
+    displayName: Allow WireGuard ingress
+    description: Allow inbound WireGuard UDP from any source across the forwarder port range. Disable to shrink the endpoint NetworkPolicy footprint on GKE Dataplane V2.
+    config:
+      type: bool
+      default: "true"
