@@ -2,6 +2,7 @@ package forwarder
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -17,12 +18,9 @@ type ConfigClient struct {
 	logger *slog.Logger
 }
 
-func NewConfigClient(logger *slog.Logger) *ConfigClient {
-	return &ConfigClient{logger: logger}
-}
+func NewConfigClient(logger *slog.Logger) *ConfigClient { return &ConfigClient{logger: logger} }
 
-// Connect establishes a gRPC connection to the operator at addr (e.g. "operator:9090").
-func (c *ConfigClient) Connect(ctx context.Context, addr string) error {
+func (c *ConfigClient) Connect(_ context.Context, addr string) error {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return err
@@ -32,45 +30,84 @@ func (c *ConfigClient) Connect(ctx context.Context, addr string) error {
 	return nil
 }
 
-// FetchConfig calls GetConfig RPC and returns the full ForwarderConfig.
 func (c *ConfigClient) FetchConfig(ctx context.Context) (*forwarderv1.ForwarderConfig, error) {
 	return c.client.GetConfig(ctx, &forwarderv1.GetConfigRequest{})
 }
 
-// WatchUpdates calls StreamUpdates and invokes callback for each TunnelUpdate.
-// Reconnects with exponential backoff on stream error. Blocks until ctx is cancelled.
-func (c *ConfigClient) WatchUpdates(ctx context.Context, callback func(*forwarderv1.TunnelUpdate)) error {
+func (c *ConfigClient) Ack(ctx context.Context, forwarderID string, mapping *forwarderv1.TunnelMapping) error {
+	if mapping == nil {
+		return fmt.Errorf("nil tunnel mapping")
+	}
+	_, err := c.client.Ack(ctx, &forwarderv1.AckRequest{
+		ForwarderId:     &forwarderID,
+		TunnelName:      mapping.TunnelName,
+		TunnelNamespace: mapping.TunnelNamespace,
+		Revision:        mapping.Revision,
+	})
+	return err
+}
+
+// WatchUpdates establishes a registered update stream, waits for its SYNC
+// barrier, and then fetches a snapshot. Updates queued before the snapshot are
+// replayed afterwards; mapping revisions make older queued updates no-ops.
+// This sequence runs again for every reconnect.
+func (c *ConfigClient) WatchUpdates(
+	ctx context.Context,
+	forwarderID string,
+	onSnapshot func(*forwarderv1.ForwarderConfig) error,
+	onUpdate func(*forwarderv1.TunnelUpdate) error,
+) error {
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		stream, err := c.client.StreamUpdates(ctx, &forwarderv1.StreamUpdatesRequest{})
-		if err != nil {
-			c.logger.Info("stream error, reconnecting", "err", err, "backoff", backoff)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
+		stream, err := c.client.StreamUpdates(ctx, &forwarderv1.StreamUpdatesRequest{ForwarderId: &forwarderID})
+		if err == nil {
+			update, recvErr := stream.Recv()
+			if recvErr != nil {
+				err = recvErr
+			} else if update.GetType() != forwarderv1.UpdateType_SYNC {
+				err = fmt.Errorf("expected stream sync marker, got %s", update.GetType())
 			}
-			if backoff < 30*time.Second {
-				backoff *= 2
-			}
-			continue
 		}
-		backoff = time.Second
-		for {
-			update, err := stream.Recv()
-			if err != nil {
-				c.logger.Info("stream recv error, reconnecting", "err", err)
-				break
+		if err == nil {
+			config, fetchErr := c.FetchConfig(ctx)
+			if fetchErr != nil {
+				err = fmt.Errorf("fetch config after stream sync: %w", fetchErr)
+			} else if callbackErr := onSnapshot(config); callbackErr != nil {
+				err = fmt.Errorf("apply config snapshot: %w", callbackErr)
 			}
-			callback(update)
+		}
+		if err == nil {
+			backoff = time.Second
+			for {
+				update, recvErr := stream.Recv()
+				if recvErr != nil {
+					err = recvErr
+					break
+				}
+				if update.GetType() == forwarderv1.UpdateType_SYNC {
+					continue
+				}
+				if callbackErr := onUpdate(update); callbackErr != nil {
+					c.logger.Error("apply tunnel update failed", "err", callbackErr)
+				}
+			}
+		}
+
+		c.logger.Info("stream error, reconnecting", "err", err, "backoff", backoff)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
 		}
 	}
 }
 
-// Close closes the underlying gRPC connection.
 func (c *ConfigClient) Close() error {
 	if c.conn != nil {
 		return c.conn.Close()

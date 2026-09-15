@@ -7,11 +7,14 @@ option go_package = "github.com/nais/tunnel-operator/pkg/forwarder/proto";
 service ForwarderConfigService {
   rpc GetConfig(GetConfigRequest) returns (ForwarderConfig) {}
   rpc StreamUpdates(StreamUpdatesRequest) returns (stream TunnelUpdate) {}
+  rpc Ack(AckRequest) returns (AckResponse) {}
 }
 
 message GetConfigRequest {}
 
-message StreamUpdatesRequest {}
+message StreamUpdatesRequest {
+  string forwarder_id = 1;
+}
 
 message ForwarderConfig {
   string lb_vip = 1;
@@ -23,15 +26,30 @@ message TunnelMapping {
   string tunnel_namespace = 2;
   int32 forwarder_port = 3;
   string gateway_address = 4;  // pod IP:port e.g. "10.0.0.5:51820"
+  int64 revision = 5;
+  string gateway_pod_uid = 6;
+  string gateway_pod_ip = 7;
 }
 
 enum UpdateType {
   ADDED = 0;
   MODIFIED = 1;
   DELETED = 2;
+  // SYNC is sent immediately after a stream is registered. It establishes a
+  // barrier: clients fetch their snapshot only after receiving this marker.
+  SYNC = 3;
 }
 
 message TunnelUpdate {
   UpdateType type = 1;
   TunnelMapping tunnel = 2;
 }
+
+message AckRequest {
+  string forwarder_id = 1;
+  string tunnel_name = 2;
+  string tunnel_namespace = 3;
+  int64 revision = 4;
+}
+
+message AckResponse {}

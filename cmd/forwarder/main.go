@@ -61,6 +61,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	configClient := forwarder.NewConfigClient(logger)
+	forwarderID := forwarderIdentity()
 	defer func() {
 		if err := configClient.Close(); err != nil {
 			logger.Error("close gRPC client", "err", err)
@@ -109,14 +110,24 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return err
 	}
 
-	healthServer.SetReady(true)
-	logger.Info("forwarder ready", "tunnels", len(config.GetTunnels()), "lbVIP", lbVIP)
+	logger.Info("forwarder initial config applied; waiting for update stream sync",
+		"tunnels", len(config.GetTunnels()), "lbVIP", lbVIP,
+	)
 
 	watchErrCh := make(chan error, 1)
 	go func() {
-		watchErrCh <- configClient.WatchUpdates(ctx, func(update *forwarderv1.TunnelUpdate) {
-			handleUpdate(ctx, proxy, logger, update)
-		})
+		watchErrCh <- configClient.WatchUpdates(ctx, forwarderID,
+			func(snapshot *forwarderv1.ForwarderConfig) error {
+				if err := applySnapshot(ctx, proxy, configClient, forwarderID, snapshot); err != nil {
+					return err
+				}
+				healthServer.SetReady(true)
+				return nil
+			},
+			func(update *forwarderv1.TunnelUpdate) error {
+				return handleUpdate(ctx, proxy, configClient, forwarderID, logger, update)
+			},
+		)
 	}()
 
 	select {
@@ -164,40 +175,43 @@ func connectAndFetchConfig(
 }
 
 func applyMappings(ctx context.Context, proxy *forwarder.UDPProxy, mappings []*forwarderv1.TunnelMapping) error {
-	for _, mapping := range mappings {
-		if mapping == nil {
+	return proxy.ReconcileMappings(ctx, mappings)
+}
+
+func applySnapshot(
+	ctx context.Context, proxy *forwarder.UDPProxy, configClient *forwarder.ConfigClient,
+	forwarderID string, snapshot *forwarderv1.ForwarderConfig,
+) error {
+	if err := applyMappings(ctx, proxy, snapshot.GetTunnels()); err != nil {
+		return err
+	}
+	for _, mapping := range snapshot.GetTunnels() {
+		if mapping == nil || mapping.GetForwarderPort() <= 0 || strings.TrimSpace(mapping.GetGatewayAddress()) == "" {
 			continue
 		}
-
-		port := int(mapping.GetForwarderPort())
-		gatewayAddr := strings.TrimSpace(mapping.GetGatewayAddress())
-		if port <= 0 || gatewayAddr == "" {
-			continue
-		}
-
-		err := proxy.AddMapping(ctx, port, gatewayAddr, mapping.GetTunnelName(), mapping.GetTunnelNamespace())
-		if err != nil {
-			return fmt.Errorf("add mapping for port %d: %w", port, err)
+		if err := configClient.Ack(ctx, forwarderID, mapping); err != nil {
+			return fmt.Errorf("ack mapping %s/%s revision %d: %w",
+				mapping.GetTunnelNamespace(), mapping.GetTunnelName(), mapping.GetRevision(), err,
+			)
 		}
 	}
-
 	return nil
 }
 
 func handleUpdate(
-	ctx context.Context, proxy *forwarder.UDPProxy,
-	logger *slog.Logger, update *forwarderv1.TunnelUpdate,
-) {
+	ctx context.Context, proxy *forwarder.UDPProxy, configClient *forwarder.ConfigClient,
+	forwarderID string, logger *slog.Logger, update *forwarderv1.TunnelUpdate,
+) error {
 	if update == nil || update.GetTunnel() == nil {
 		logger.Warn("ignoring invalid tunnel update")
-		return
+		return nil
 	}
 
 	mapping := update.GetTunnel()
 	port := int(mapping.GetForwarderPort())
 	if port <= 0 {
 		logger.Warn("ignoring tunnel update with invalid port", "port", port)
-		return
+		return nil
 	}
 
 	switch update.GetType() {
@@ -205,15 +219,18 @@ func handleUpdate(
 		gatewayAddr := strings.TrimSpace(mapping.GetGatewayAddress())
 		if gatewayAddr == "" {
 			logger.Warn("ignoring tunnel update with empty gateway address", "port", port, "type", update.GetType().String())
-			return
+			return nil
 		}
 
-		err := proxy.AddMapping(ctx, port, gatewayAddr, mapping.GetTunnelName(), mapping.GetTunnelNamespace())
+		err := proxy.ApplyMapping(ctx, mapping)
 		if err != nil {
 			logger.Error("failed to apply tunnel update",
 				"port", port, "gatewayAddr", gatewayAddr,
 				"type", update.GetType().String(), "err", err)
-			return
+			return fmt.Errorf("apply tunnel update for port %d: %w", port, err)
+		}
+		if err := configClient.Ack(ctx, forwarderID, mapping); err != nil {
+			return fmt.Errorf("ack tunnel update for port %d: %w", port, err)
 		}
 
 		logger.Info("applied tunnel update", "port", port, "gatewayAddr", gatewayAddr, "type", update.GetType().String())
@@ -223,6 +240,17 @@ func handleUpdate(
 	default:
 		logger.Warn("ignoring unknown tunnel update type", "type", update.GetType().String(), "port", port)
 	}
+	return nil
+}
+
+func forwarderIdentity() string {
+	if id := strings.TrimSpace(os.Getenv("FORWARDER_ID")); id != "" {
+		return id
+	}
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return hostname
+	}
+	return "forwarder"
 }
 
 func drainForwarder(proxy *forwarder.UDPProxy, healthServer *forwarder.HealthServer, logger *slog.Logger) error {

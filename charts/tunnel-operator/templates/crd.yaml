@@ -98,6 +98,16 @@ spec:
               gatewayPodName:
                 type: string
                 description: Name of the gateway pod
+              gatewayPodUID:
+                type: string
+                description: UID of the current gateway pod instance
+              gatewayPodIP:
+                type: string
+                description: IP address of the current gateway pod
+              mappingRevision:
+                type: integer
+                format: int64
+                description: Monotonic revision of the gateway mapping
               message:
                 type: string
                 description: Human-readable status message

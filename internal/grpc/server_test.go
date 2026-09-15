@@ -46,12 +46,25 @@ func TestGetConfigReturnsTunnelMappingsForAllocatedTunnels(t *testing.T) {
 			&v1alpha1.Tunnel{
 				ObjectMeta: metav1.ObjectMeta{Name: "tunnel-a", Namespace: "default"},
 				Status: v1alpha1.TunnelStatus{
-					ForwarderPort:  10005,
-					GatewayPodName: "gateway-a",
+					ForwarderPort:    10005,
+					GatewayPublicKey: "gateway-public-key",
+					GatewayPodName:   "gateway-a",
+					GatewayPodUID:    "gateway-uid-a",
+					GatewayPodIP:     "10.42.0.15",
+					MappingRevision:  3,
 				},
 			},
 			&v1alpha1.Tunnel{
 				ObjectMeta: metav1.ObjectMeta{Name: "tunnel-b", Namespace: "default"},
+			},
+			&v1alpha1.Tunnel{
+				ObjectMeta: metav1.ObjectMeta{Name: "tunnel-terminated", Namespace: "default"},
+				Status: v1alpha1.TunnelStatus{
+					Phase:            v1alpha1.TunnelPhaseTerminated,
+					ForwarderPort:    10006,
+					GatewayPublicKey: "gateway-public-key",
+					GatewayPodIP:     "10.42.0.16",
+				},
 			},
 			&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{Name: "gateway-a", Namespace: "default"},
@@ -94,6 +107,9 @@ func TestGetConfigReturnsTunnelMappingsForAllocatedTunnels(t *testing.T) {
 	}
 	if mapping.GetGatewayAddress() != "10.42.0.15:51820" {
 		t.Fatalf("expected gateway address 10.42.0.15:51820, got %q", mapping.GetGatewayAddress())
+	}
+	if mapping.GetGatewayPodUid() != "gateway-uid-a" || mapping.GetGatewayPodIp() != "10.42.0.15" || mapping.GetRevision() != 3 {
+		t.Fatalf("unexpected mapping identity/revision: uid=%q ip=%q revision=%d", mapping.GetGatewayPodUid(), mapping.GetGatewayPodIp(), mapping.GetRevision())
 	}
 
 	port, ok := allocator.GetPort("default/tunnel-a")

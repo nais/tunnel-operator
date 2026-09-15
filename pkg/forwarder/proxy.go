@@ -8,6 +8,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	forwarderv1 "github.com/nais/tunnel-operator/pkg/forwarder/proto/forwarder/v1"
 )
 
 const udpBufferSize = 65535
@@ -26,6 +28,7 @@ type UDPProxy struct {
 type portListener struct {
 	conn            *net.UDPConn
 	gateway         string
+	revision        int64
 	tunnelName      string
 	tunnelNamespace string
 	sessions        *SessionMap
@@ -40,10 +43,36 @@ func NewUDPProxy(idleTimeout time.Duration) *UDPProxy {
 }
 
 func (p *UDPProxy) AddMapping(ctx context.Context, port int, gatewayAddr, tunnelName, tunnelNamespace string) error {
+	return p.addMapping(ctx, port, gatewayAddr, tunnelName, tunnelNamespace, 0)
+}
+
+// ApplyMapping applies a mapping only when it is at least as recent as the
+// active mapping. Revisions make queued updates from before a snapshot safe to
+// replay after that snapshot has been reconciled.
+func (p *UDPProxy) ApplyMapping(ctx context.Context, mapping *forwarderv1.TunnelMapping) error {
+	if mapping == nil || mapping.GetForwarderPort() <= 0 || mapping.GetGatewayAddress() == "" {
+		return fmt.Errorf("invalid tunnel mapping")
+	}
+	return p.addMapping(
+		ctx,
+		int(mapping.GetForwarderPort()),
+		mapping.GetGatewayAddress(),
+		mapping.GetTunnelName(),
+		mapping.GetTunnelNamespace(),
+		mapping.GetRevision(),
+	)
+}
+
+func (p *UDPProxy) addMapping(
+	ctx context.Context, port int, gatewayAddr, tunnelName, tunnelNamespace string, revision int64,
+) error {
 	p.mu.RLock()
 	existing, exists := p.mappings[port]
 	p.mu.RUnlock()
 	if exists {
+		if existing.revision > revision {
+			return nil
+		}
 		if existing.gateway == gatewayAddr {
 			return nil
 		}
@@ -60,6 +89,7 @@ func (p *UDPProxy) AddMapping(ctx context.Context, port int, gatewayAddr, tunnel
 	pl := &portListener{
 		conn:            conn,
 		gateway:         gatewayAddr,
+		revision:        revision,
 		tunnelName:      tunnelName,
 		tunnelNamespace: tunnelNamespace,
 		sessions:        NewSessionMap(),
@@ -84,6 +114,41 @@ func (p *UDPProxy) AddMapping(ctx context.Context, port int, gatewayAddr, tunnel
 	go p.cleanupIdleSessions(ctx, pl)
 
 	return nil
+}
+
+// ReconcileMappings makes mappings exactly match the authoritative snapshot.
+// It applies all snapshot mappings before removing stale listeners so a failed
+// replacement never removes an otherwise usable mapping.
+func (p *UDPProxy) ReconcileMappings(ctx context.Context, mappings []*forwarderv1.TunnelMapping) error {
+	desired := make(map[int]struct{}, len(mappings))
+	for _, mapping := range mappings {
+		if mapping == nil || mapping.GetForwarderPort() <= 0 || mapping.GetGatewayAddress() == "" {
+			continue
+		}
+		port := int(mapping.GetForwarderPort())
+		desired[port] = struct{}{}
+		if err := p.ApplyMapping(ctx, mapping); err != nil {
+			return fmt.Errorf("apply mapping for port %d: %w", port, err)
+		}
+	}
+
+	for _, port := range p.Ports() {
+		if _, ok := desired[port]; !ok {
+			p.RemoveMapping(port)
+		}
+	}
+	return nil
+}
+
+// Ports returns a snapshot of active listener ports.
+func (p *UDPProxy) Ports() []int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	ports := make([]int, 0, len(p.mappings))
+	for port := range p.mappings {
+		ports = append(ports, port)
+	}
+	return ports
 }
 
 func (p *UDPProxy) RemoveMapping(port int) {

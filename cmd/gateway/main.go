@@ -19,8 +19,8 @@ import (
 
 	"github.com/nais/tunnel-operator/pkg/wireguard"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	_ "go.uber.org/automaxprocs" // set GOMAXPROCS from the CFS quota to avoid CPU throttling stalls
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 func main() {

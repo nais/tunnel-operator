@@ -35,6 +35,9 @@ type TunnelStatus struct {
 	ForwarderPort     int32              `json:"forwarderPort,omitempty"`
 	ForwarderEndpoint string             `json:"forwarderEndpoint,omitempty"`
 	GatewayPodName    string             `json:"gatewayPodName,omitempty"`
+	GatewayPodUID     string             `json:"gatewayPodUID,omitempty"`
+	GatewayPodIP      string             `json:"gatewayPodIP,omitempty"`
+	MappingRevision   int64              `json:"mappingRevision,omitempty"`
 	Message           string             `json:"message,omitempty"`
 	Conditions        []metav1.Condition `json:"conditions,omitempty"`
 }
@@ -58,8 +61,4 @@ type TunnelList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Tunnel `json:"items"`
-}
-
-func init() {
-	SchemeBuilder.Register(&Tunnel{}, &TunnelList{})
 }

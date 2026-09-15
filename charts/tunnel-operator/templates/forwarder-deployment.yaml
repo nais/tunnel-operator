@@ -31,6 +31,10 @@ spec:
         env:
         - name: OPERATOR_GRPC_ADDR
           value: {{ .Values.forwarder.grpcAddr | quote }}
+        - name: FORWARDER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
         - name: HEALTH_ADDR
           value: {{ .Values.forwarder.healthAddr | quote }}
         - name: LOG_LEVEL

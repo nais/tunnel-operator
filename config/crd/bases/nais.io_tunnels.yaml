@@ -136,10 +136,17 @@ spec:
               forwarderPort:
                 format: int32
                 type: integer
+              gatewayPodIP:
+                type: string
               gatewayPodName:
+                type: string
+              gatewayPodUID:
                 type: string
               gatewayPublicKey:
                 type: string
+              mappingRevision:
+                format: int64
+                type: integer
               message:
                 type: string
               phase:

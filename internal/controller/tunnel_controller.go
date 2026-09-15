@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	finalizerName     = "tunnels.nais.io/cleanup"
-	gatewayStatusPort = 8080
+	finalizerName       = "tunnels.nais.io/cleanup"
+	gatewayStatusPort   = 8080
+	forwarderAckRequeue = 2 * time.Second
 )
 
 type TunnelReconciler struct {
@@ -101,6 +102,7 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 
 	statusBase := tunnel.DeepCopy()
 	updated := false
+	mappingChanged := false
 	updateType := forwarderv1.UpdateType_MODIFIED
 	if tunnel.Status.ForwarderPort == 0 && r.PortAllocator != nil {
 		allocatedPort, err := r.PortAllocator.Allocate(tunnelKey(tunnel))
@@ -110,22 +112,52 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 		tunnel.Status.ForwarderPort = allocatedPort
 		portAllocationsActive.Inc()
 		updated = true
+		mappingChanged = true
 		updateType = forwarderv1.UpdateType_ADDED
 	}
 	if tunnel.Status.GatewayPodName != resourceName {
 		tunnel.Status.GatewayPodName = resourceName
 		updated = true
+		mappingChanged = true
+	}
+	if uid := string(pod.UID); tunnel.Status.GatewayPodUID != uid {
+		tunnel.Status.GatewayPodUID = uid
+		// A replacement gateway must publish and verify its own key before this
+		// Tunnel can be considered ready again.
+		tunnel.Status.GatewayPublicKey = ""
+		updated = true
+		mappingChanged = true
+	}
+	if tunnel.Status.GatewayPodIP != pod.Status.PodIP {
+		tunnel.Status.GatewayPodIP = pod.Status.PodIP
+		updated = true
+		mappingChanged = true
+	}
+	if mappingChanged {
+		tunnel.Status.MappingRevision++
 	}
 
 	phaseUpdated, requeueAfter := r.evaluatePodPhase(ctx, tunnel, pod)
 	updated = updated || phaseUpdated
 
 	if updated {
+		// Persist the new revision before publishing it. GetConfig snapshots
+		// therefore cannot observe a mapping older than a published update.
 		if err := r.Client.Status().Patch(ctx, tunnel, client.MergeFrom(statusBase)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating tunnel status: %w", err)
 		}
 		tunnelsActive.WithLabelValues(string(tunnel.Status.Phase), tunnel.Namespace).Inc()
-		r.notifyTunnelUpdate(ctx, tunnel, updateType)
+		if mappingChanged {
+			r.notifyTunnelUpdate(tunnel, updateType)
+		}
+	}
+	// A connected forwarder may have transiently failed to apply the update.
+	// Republish the same revision on bounded requeues; applying it is idempotent
+	// and it gives that forwarder another opportunity to acknowledge.
+	if r.ForwarderServer != nil && tunnel.Status.GatewayPodIP != "" &&
+		tunnel.Status.GatewayPublicKey != "" &&
+		tunnel.Status.Phase != v1alpha1.TunnelPhaseReady && tunnel.Status.MappingRevision > 0 {
+		r.notifyTunnelUpdate(tunnel, forwarderv1.UpdateType_MODIFIED)
 	}
 
 	logger.Info("reconciled tunnel", "tunnel", req.NamespacedName, "pod", resourceName)
@@ -331,7 +363,7 @@ func (r *TunnelReconciler) evaluatePodPhase(
 		updated = updated || u
 		requeueAfter = r2
 	default:
-		if tunnel.Status.Phase == "" || tunnel.Status.Phase == v1alpha1.TunnelPhasePending {
+		if tunnel.Status.Phase != v1alpha1.TunnelPhaseProvisioning || tunnel.Status.Message != "Gateway pod starting" {
 			tunnel.Status.Phase = v1alpha1.TunnelPhaseProvisioning
 			tunnel.Status.Message = "Gateway pod starting"
 			updated = true
@@ -360,7 +392,19 @@ func (r *TunnelReconciler) handleReadyPod(
 				tunnel.Status.GatewayPublicKey = pubKey
 				updated = true
 			}
-			if tunnel.Status.Phase != v1alpha1.TunnelPhaseReady {
+			if r.ForwarderServer != nil {
+				missing := r.ForwarderServer.MissingAcks(tunnel.Namespace, tunnel.Name, tunnel.Status.MappingRevision)
+				if len(missing) > 0 {
+					if tunnel.Status.Phase != v1alpha1.TunnelPhaseProvisioning || tunnel.Status.Message != "Waiting for forwarder mapping acknowledgement" {
+						tunnel.Status.Phase = v1alpha1.TunnelPhaseProvisioning
+						tunnel.Status.Message = "Waiting for forwarder mapping acknowledgement"
+						updated = true
+					}
+					requeueAfter = forwarderAckRequeue
+					return updated, requeueAfter
+				}
+			}
+			if tunnel.Status.Phase != v1alpha1.TunnelPhaseReady || tunnel.Status.Message != "Gateway ready" {
 				tunnel.Status.Phase = v1alpha1.TunnelPhaseReady
 				tunnel.Status.Message = "Gateway ready"
 				updated = true
@@ -398,7 +442,7 @@ func (r *TunnelReconciler) handleDeletion(ctx context.Context, tunnel *v1alpha1.
 	}
 
 	r.releaseForwarderPort(tunnel)
-	r.notifyTunnelUpdate(ctx, tunnel, forwarderv1.UpdateType_DELETED)
+	r.notifyTunnelUpdate(tunnel, forwarderv1.UpdateType_DELETED)
 
 	return nil
 }
@@ -416,7 +460,7 @@ func (r *TunnelReconciler) handleTerminated(ctx context.Context, tunnel *v1alpha
 	}
 
 	r.releaseForwarderPort(tunnel)
-	r.notifyTunnelUpdate(ctx, tunnel, forwarderv1.UpdateType_DELETED)
+	r.notifyTunnelUpdate(tunnel, forwarderv1.UpdateType_DELETED)
 
 	return client.IgnoreNotFound(r.Client.Delete(ctx, tunnel))
 }
@@ -471,22 +515,22 @@ func (r *TunnelReconciler) releaseForwarderPort(tunnel *v1alpha1.Tunnel) {
 	portAllocationsActive.Dec()
 }
 
-func (r *TunnelReconciler) notifyTunnelUpdate(ctx context.Context, tunnel *v1alpha1.Tunnel, updateType forwarderv1.UpdateType) {
+func (r *TunnelReconciler) notifyTunnelUpdate(tunnel *v1alpha1.Tunnel, updateType forwarderv1.UpdateType) {
 	if r.ForwarderServer == nil || tunnel.Status.ForwarderPort <= 0 {
 		return
 	}
-
-	gatewayAddress := net.JoinHostPort(tunnel.Status.GatewayPodName, strconv.Itoa(51820))
-	if tunnel.Status.GatewayPodName != "" {
-		pod := &corev1.Pod{}
-		if err := r.Client.Get(ctx, client.ObjectKey{Namespace: tunnel.Namespace, Name: tunnel.Status.GatewayPodName}, pod); err == nil && pod.Status.PodIP != "" {
-			gatewayAddress = net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(51820))
-		}
+	if updateType != forwarderv1.UpdateType_DELETED &&
+		(tunnel.Status.GatewayPodIP == "" || tunnel.Status.GatewayPublicKey == "") {
+		return
 	}
 
+	gatewayAddress := net.JoinHostPort(tunnel.Status.GatewayPodIP, strconv.Itoa(51820))
 	forwarderPort := tunnel.Status.ForwarderPort
 	tunnelName := tunnel.Name
 	tunnelNamespace := tunnel.Namespace
+	revision := tunnel.Status.MappingRevision
+	gatewayPodUID := tunnel.Status.GatewayPodUID
+	gatewayPodIP := tunnel.Status.GatewayPodIP
 
 	r.ForwarderServer.NotifyUpdate(&forwarderv1.TunnelUpdate{
 		Type: &updateType,
@@ -495,6 +539,9 @@ func (r *TunnelReconciler) notifyTunnelUpdate(ctx context.Context, tunnel *v1alp
 			TunnelNamespace: &tunnelNamespace,
 			ForwarderPort:   &forwarderPort,
 			GatewayAddress:  &gatewayAddress,
+			Revision:        &revision,
+			GatewayPodUid:   &gatewayPodUID,
+			GatewayPodIp:    &gatewayPodIP,
 		},
 	})
 }

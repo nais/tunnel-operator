@@ -303,6 +303,33 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(*udpRule.Ports[0].Protocol).To(Equal(corev1.ProtocolUDP))
 		})
 
+		It("should update gateway identity and mapping revision when the gateway pod is replaced", func() {
+			reconciler := newReconciler()
+			_, err := reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+
+			tunnel := &v1alpha1.Tunnel{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
+			initialRevision := tunnel.Status.MappingRevision
+			initialUID := tunnel.Status.GatewayPodUID
+
+			pod := &corev1.Pod{}
+			podKey := types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}
+			Expect(k8sClient.Get(ctx, podKey, pod)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, pod)).To(Succeed())
+			Eventually(func() bool {
+				return errors.IsNotFound(k8sClient.Get(ctx, podKey, &corev1.Pod{}))
+			}).Should(BeTrue())
+
+			_, err = reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
+			Expect(tunnel.Status.GatewayPodUID).NotTo(Equal(initialUID))
+			Expect(tunnel.Status.MappingRevision).To(BeNumerically(">", initialRevision))
+		})
+
 		It("should set phase to Ready when pod is ready and gateway status is available", func() {
 			reconciler := newReconciler()
 			reconciler.FetchGatewayStatus = func(podIP string) (string, error) {
@@ -335,6 +362,9 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
 			Expect(tunnel.Status.Phase).To(Equal(v1alpha1.TunnelPhaseReady))
 			Expect(tunnel.Status.GatewayPublicKey).To(Equal("mock-gateway-public-key"))
+			Expect(tunnel.Status.GatewayPodUID).To(Equal(string(pod.UID)))
+			Expect(tunnel.Status.GatewayPodIP).To(Equal("10.244.0.5"))
+			Expect(tunnel.Status.MappingRevision).To(BeNumerically(">", 0))
 			Expect(tunnel.Status.Message).To(Equal("Gateway ready"))
 		})
 

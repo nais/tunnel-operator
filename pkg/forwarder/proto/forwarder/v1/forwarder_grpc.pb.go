@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	ForwarderConfigService_GetConfig_FullMethodName     = "/nais.tunnel.forwarder.v1.ForwarderConfigService/GetConfig"
 	ForwarderConfigService_StreamUpdates_FullMethodName = "/nais.tunnel.forwarder.v1.ForwarderConfigService/StreamUpdates"
+	ForwarderConfigService_Ack_FullMethodName           = "/nais.tunnel.forwarder.v1.ForwarderConfigService/Ack"
 )
 
 // ForwarderConfigServiceClient is the client API for ForwarderConfigService service.
@@ -29,6 +30,7 @@ const (
 type ForwarderConfigServiceClient interface {
 	GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*ForwarderConfig, error)
 	StreamUpdates(ctx context.Context, in *StreamUpdatesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TunnelUpdate], error)
+	Ack(ctx context.Context, in *AckRequest, opts ...grpc.CallOption) (*AckResponse, error)
 }
 
 type forwarderConfigServiceClient struct {
@@ -68,12 +70,23 @@ func (c *forwarderConfigServiceClient) StreamUpdates(ctx context.Context, in *St
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ForwarderConfigService_StreamUpdatesClient = grpc.ServerStreamingClient[TunnelUpdate]
 
+func (c *forwarderConfigServiceClient) Ack(ctx context.Context, in *AckRequest, opts ...grpc.CallOption) (*AckResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AckResponse)
+	err := c.cc.Invoke(ctx, ForwarderConfigService_Ack_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ForwarderConfigServiceServer is the server API for ForwarderConfigService service.
 // All implementations must embed UnimplementedForwarderConfigServiceServer
 // for forward compatibility.
 type ForwarderConfigServiceServer interface {
 	GetConfig(context.Context, *GetConfigRequest) (*ForwarderConfig, error)
 	StreamUpdates(*StreamUpdatesRequest, grpc.ServerStreamingServer[TunnelUpdate]) error
+	Ack(context.Context, *AckRequest) (*AckResponse, error)
 	mustEmbedUnimplementedForwarderConfigServiceServer()
 }
 
@@ -89,6 +102,9 @@ func (UnimplementedForwarderConfigServiceServer) GetConfig(context.Context, *Get
 }
 func (UnimplementedForwarderConfigServiceServer) StreamUpdates(*StreamUpdatesRequest, grpc.ServerStreamingServer[TunnelUpdate]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamUpdates not implemented")
+}
+func (UnimplementedForwarderConfigServiceServer) Ack(context.Context, *AckRequest) (*AckResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Ack not implemented")
 }
 func (UnimplementedForwarderConfigServiceServer) mustEmbedUnimplementedForwarderConfigServiceServer() {
 }
@@ -141,6 +157,24 @@ func _ForwarderConfigService_StreamUpdates_Handler(srv interface{}, stream grpc.
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ForwarderConfigService_StreamUpdatesServer = grpc.ServerStreamingServer[TunnelUpdate]
 
+func _ForwarderConfigService_Ack_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ForwarderConfigServiceServer).Ack(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ForwarderConfigService_Ack_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ForwarderConfigServiceServer).Ack(ctx, req.(*AckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ForwarderConfigService_ServiceDesc is the grpc.ServiceDesc for ForwarderConfigService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -151,6 +185,10 @@ var ForwarderConfigService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetConfig",
 			Handler:    _ForwarderConfigService_GetConfig_Handler,
+		},
+		{
+			MethodName: "Ack",
+			Handler:    _ForwarderConfigService_Ack_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

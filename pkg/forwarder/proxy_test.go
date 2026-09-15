@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	forwarderv1 "github.com/nais/tunnel-operator/pkg/forwarder/proto/forwarder/v1"
 )
 
 func TestUDPProxyAddMappingForwardsPackets(t *testing.T) {
@@ -37,6 +39,75 @@ func TestUDPProxyAddMappingForwardsPackets(t *testing.T) {
 	listener := mappingForPort(t, proxy, proxyPort)
 	if _, ok := listener.sessions.Get(clientConn.LocalAddr().String()); !ok {
 		t.Fatalf("expected session for client %s", clientConn.LocalAddr())
+	}
+}
+
+func TestUDPProxyReconcileMappingsRemovesStaleMapping(t *testing.T) {
+	t.Parallel()
+
+	echoConn := startUDPEchoServer(t)
+	stalePort := reserveUDPPort(t)
+	currentPort := reserveUDPPort(t)
+	proxy := NewUDPProxy(5 * time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		proxy.Close()
+	})
+
+	if err := proxy.AddMapping(ctx, stalePort, echoConn.LocalAddr().String(), "stale", "default"); err != nil {
+		t.Fatalf("add stale mapping: %v", err)
+	}
+	mapping := &forwarderv1.TunnelMapping{
+		TunnelName:      new("current"),
+		TunnelNamespace: new("default"),
+		ForwarderPort:   new(int32(currentPort)),
+		GatewayAddress:  new(echoConn.LocalAddr().String()),
+		Revision:        new(int64(2)),
+	}
+	if err := proxy.ReconcileMappings(ctx, []*forwarderv1.TunnelMapping{mapping}); err != nil {
+		t.Fatalf("reconcile mappings: %v", err)
+	}
+
+	if _, exists := proxy.mappings[stalePort]; exists {
+		t.Fatalf("expected stale mapping on port %d to be removed", stalePort)
+	}
+	if _, exists := proxy.mappings[currentPort]; !exists {
+		t.Fatalf("expected current mapping on port %d", currentPort)
+	}
+}
+
+func TestUDPProxyIgnoresStaleMappingRevision(t *testing.T) {
+	t.Parallel()
+
+	firstGateway := startUDPEchoServer(t)
+	secondGateway := startUDPEchoServer(t)
+	proxyPort := reserveUDPPort(t)
+	proxy := NewUDPProxy(5 * time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		proxy.Close()
+	})
+
+	newMapping := func(addr string, revision int64) *forwarderv1.TunnelMapping {
+		return &forwarderv1.TunnelMapping{
+			TunnelName:      new("test"),
+			TunnelNamespace: new("default"),
+			ForwarderPort:   new(int32(proxyPort)),
+			GatewayAddress:  new(addr),
+			Revision:        new(revision),
+		}
+	}
+	if err := proxy.ApplyMapping(ctx, newMapping(firstGateway.LocalAddr().String(), 2)); err != nil {
+		t.Fatalf("apply current mapping: %v", err)
+	}
+	if err := proxy.ApplyMapping(ctx, newMapping(secondGateway.LocalAddr().String(), 1)); err != nil {
+		t.Fatalf("apply stale mapping: %v", err)
+	}
+
+	if got := mappingForPort(t, proxy, proxyPort).gateway; got != firstGateway.LocalAddr().String() {
+		t.Fatalf("stale mapping replaced gateway: got %q want %q", got, firstGateway.LocalAddr())
 	}
 }
 
