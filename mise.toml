@@ -2,7 +2,7 @@
 pin = true
 
 [tools]
-go = "1.26.2"
+go = "1.26.8"
 kube-controller-tools = "0.20.1"
 setup-envtest = "0.23.3"
 buf = "1.68.1"
