@@ -17,6 +17,10 @@ forwarderPortRange:
 apiServer:
   address: ""
 
+# Full gateway image reference. Fasit supplies an immutable build tag here.
+# If unset, the legacy gateway.image settings below remain supported.
+gatewayImage: ""
+
 gateway:
   image:
     repository: europe-north1-docker.pkg.dev/nais-io/nais/images/tunnel-operator-gateway
@@ -53,9 +57,6 @@ forwarder:
     minReplicas: 2
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
-  portRange:
-    min: 51820
-    max: 51919
   # Allow inbound WireGuard UDP from any source (0.0.0.0/0) across the port range.
   # On GKE Dataplane V2 this compiles to an expensive endpoint policy; set false to
   # test whether it's what blocks BPF policy-map programming under identity pressure.

@@ -22,8 +22,8 @@ spec:
             cidr: 0.0.0.0/0
       ports:
         - protocol: UDP
-          port: {{ .Values.forwarder.portRange.min }}
-          endPort: {{ .Values.forwarder.portRange.max }}
+          port: {{ .Values.forwarderPortRange.min }}
+          endPort: {{ .Values.forwarderPortRange.max }}
 {{- end }}
     - from:
         - podSelector:

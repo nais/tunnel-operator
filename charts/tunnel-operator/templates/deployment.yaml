@@ -27,7 +27,7 @@ spec:
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         env:
         - name: GATEWAY_IMAGE
-          value: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag | default .Chart.AppVersion }}"
+          value: {{ .Values.gatewayImage | default (printf "%s:%s" .Values.gateway.image.repository (.Values.gateway.image.tag | default .Chart.AppVersion)) | quote }}
         - name: GRPC_ADDR
           value: ":{{ .Values.grpc.port }}"
         - name: FORWARDER_SERVICE_NAME
