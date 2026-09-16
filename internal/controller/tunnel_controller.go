@@ -237,6 +237,7 @@ func gatewayPodSpec(tunnel *v1alpha1.Tunnel, image string, deadlineSeconds int64
 			Env: []corev1.EnvVar{
 				{Name: "TUNNEL_PEER_PUBLIC_KEY", Value: tunnel.Spec.ClientPublicKey},
 				{Name: "TUNNEL_TARGET_HOST", Value: tunnel.Spec.Target.Host},
+				{Name: "TUNNEL_TARGET_IP", Value: tunnel.Spec.Target.ResolvedIP},
 				{Name: "TUNNEL_TARGET_PORT", Value: strconv.Itoa(int(tunnel.Spec.Target.Port))},
 				{Name: "TUNNEL_NAME", Value: tunnel.Name},
 				{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},

@@ -210,6 +210,7 @@ var _ = Describe("Tunnel Controller", func() {
 
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_PEER_PUBLIC_KEY", "client-public-key"))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_TARGET_HOST", "redis.example.internal"))
+			Expect(envByName).To(HaveKeyWithValue("TUNNEL_TARGET_IP", "10.0.0.10"))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_TARGET_PORT", "6379"))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_NAME", resourceName))
 			Expect(envByName).To(HaveKeyWithValue("TUNNEL_NAMESPACE", namespace))
