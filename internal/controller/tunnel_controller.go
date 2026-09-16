@@ -634,6 +634,7 @@ func validateTunnelTarget(target v1alpha1.TunnelTarget) error {
 func gatewayLabels(tunnelName string) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/managed-by": "tunnel-operator",
+		"app.kubernetes.io/component":  "tunnel-gateway",
 		"tunnels.nais.io/tunnel":       tunnelName,
 	}
 }
