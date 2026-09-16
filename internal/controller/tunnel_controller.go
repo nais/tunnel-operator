@@ -11,7 +11,6 @@ import (
 	"time"
 
 	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
-	operatorgrpc "github.com/nais/tunnel-operator/internal/grpc"
 	forwarderv1 "github.com/nais/tunnel-operator/pkg/forwarder/proto/forwarder/v1"
 	"github.com/nais/tunnel-operator/pkg/portalloc"
 	corev1 "k8s.io/api/core/v1"
@@ -33,11 +32,16 @@ const (
 	forwarderAckRequeue = 2 * time.Second
 )
 
+type forwarderServer interface {
+	NotifyUpdate(*forwarderv1.TunnelUpdate)
+	MissingAcks(namespace, name string, revision int64) []string
+}
+
 type TunnelReconciler struct {
 	Client              client.Client
 	Scheme              *runtime.Scheme
 	PortAllocator       *portalloc.PortAllocator
-	ForwarderServer     *operatorgrpc.ForwarderServer
+	ForwarderServer     forwarderServer
 	ForwarderServiceKey client.ObjectKey
 	ForwarderVIP        string // static override; skips service lookup when set
 	FetchGatewayStatus  func(podIP string) (string, error)

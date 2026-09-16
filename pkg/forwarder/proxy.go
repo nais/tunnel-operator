@@ -70,10 +70,16 @@ func (p *UDPProxy) addMapping(
 	existing, exists := p.mappings[port]
 	p.mu.RUnlock()
 	if exists {
-		if existing.revision > revision {
+		sameTunnel := existing.tunnelName == tunnelName && existing.tunnelNamespace == tunnelNamespace
+		if sameTunnel && existing.revision > revision {
 			return nil
 		}
-		if existing.gateway == gatewayAddr {
+		if sameTunnel && existing.gateway == gatewayAddr {
+			p.mu.Lock()
+			if current, ok := p.mappings[port]; ok && current == existing && current.revision < revision {
+				current.revision = revision
+			}
+			p.mu.Unlock()
 			return nil
 		}
 		p.RemoveMapping(port)

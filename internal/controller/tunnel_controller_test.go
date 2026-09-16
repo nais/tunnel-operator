@@ -17,7 +17,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
+	forwarderv1 "github.com/nais/tunnel-operator/pkg/forwarder/proto/forwarder/v1"
 )
+
+type fakeForwarderServer struct {
+	missing []string
+	updates []*forwarderv1.TunnelUpdate
+}
+
+func (s *fakeForwarderServer) NotifyUpdate(update *forwarderv1.TunnelUpdate) {
+	s.updates = append(s.updates, update)
+}
+
+func (s *fakeForwarderServer) MissingAcks(string, string, int64) []string {
+	return s.missing
+}
 
 var _ = Describe("Tunnel Controller", func() {
 	Context("When reconciling a resource", func() {
@@ -366,6 +380,44 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(tunnel.Status.GatewayPodIP).To(Equal("10.244.0.5"))
 			Expect(tunnel.Status.MappingRevision).To(BeNumerically(">", 0))
 			Expect(tunnel.Status.Message).To(Equal("Gateway ready"))
+		})
+
+		It("should wait for forwarder acknowledgements before setting Ready", func() {
+			forwarderServer := &fakeForwarderServer{missing: []string{"forwarder-a"}}
+			reconciler := newReconciler()
+			reconciler.ForwarderServer = forwarderServer
+			reconciler.FetchGatewayStatus = func(string) (string, error) {
+				return "mock-gateway-public-key", nil
+			}
+
+			_, err := reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+
+			pod := &corev1.Pod{}
+			podKey := types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}
+			Expect(k8sClient.Get(ctx, podKey, pod)).To(Succeed())
+			pod.Status.Phase = corev1.PodRunning
+			pod.Status.PodIP = "10.244.0.5"
+			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+			Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
+
+			result, err := reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(forwarderAckRequeue))
+			Expect(forwarderServer.updates).NotTo(BeEmpty())
+
+			tunnel := &v1alpha1.Tunnel{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
+			Expect(tunnel.Status.Phase).To(Equal(v1alpha1.TunnelPhaseProvisioning))
+			Expect(tunnel.Status.Message).To(Equal("Waiting for forwarder mapping acknowledgement"))
+
+			forwarderServer.missing = nil
+			_, err = reconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
+			Expect(tunnel.Status.Phase).To(Equal(v1alpha1.TunnelPhaseReady))
 		})
 
 		It("should drop all capabilities", func() {

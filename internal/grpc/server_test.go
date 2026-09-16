@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +16,20 @@ import (
 	forwarderv1 "github.com/nais/tunnel-operator/pkg/forwarder/proto/forwarder/v1"
 	"github.com/nais/tunnel-operator/pkg/portalloc"
 )
+
+func TestStreamIDUsesStableIdentityAndMakesLegacyIdentitiesUnique(t *testing.T) {
+	t.Parallel()
+
+	server := NewForwarderServer(nil, nil, client.ObjectKey{})
+	if got := server.streamID("forwarder-a"); got != "forwarder-a" {
+		t.Fatalf("stream ID = %q, want forwarder-a", got)
+	}
+	firstLegacy := server.streamID("")
+	secondLegacy := server.streamID("")
+	if !strings.HasPrefix(firstLegacy, "legacy-") || firstLegacy == secondLegacy {
+		t.Fatalf("legacy IDs must be distinct: first=%q second=%q", firstLegacy, secondLegacy)
+	}
+}
 
 func TestGetConfigReturnsEmptyConfigWhenNoTunnels(t *testing.T) {
 	t.Parallel()

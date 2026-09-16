@@ -111,6 +111,48 @@ func TestUDPProxyIgnoresStaleMappingRevision(t *testing.T) {
 	}
 }
 
+func TestUDPProxyReusesPortForDifferentTunnelRegardlessOfRevision(t *testing.T) {
+	t.Parallel()
+
+	secondGateway := startUDPEchoServer(t)
+	proxyPort := reserveUDPPort(t)
+	proxy := NewUDPProxy(5 * time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		proxy.Close()
+	})
+
+	oldMapping := &forwarderv1.TunnelMapping{
+		TunnelName:      new("old-tunnel"),
+		TunnelNamespace: new("default"),
+		ForwarderPort:   new(int32(proxyPort)),
+		GatewayAddress:  new("127.0.0.1:51820"),
+		Revision:        new(int64(10)),
+	}
+	newMapping := &forwarderv1.TunnelMapping{
+		TunnelName:      new("new-tunnel"),
+		TunnelNamespace: new("default"),
+		ForwarderPort:   new(int32(proxyPort)),
+		GatewayAddress:  new(secondGateway.LocalAddr().String()),
+		Revision:        new(int64(1)),
+	}
+	if err := proxy.ApplyMapping(ctx, oldMapping); err != nil {
+		t.Fatalf("apply old mapping: %v", err)
+	}
+	if err := proxy.ApplyMapping(ctx, newMapping); err != nil {
+		t.Fatalf("apply new mapping: %v", err)
+	}
+
+	listener := mappingForPort(t, proxy, proxyPort)
+	if listener.gateway != secondGateway.LocalAddr().String() {
+		t.Fatalf("reused port kept old gateway: got %q want %q", listener.gateway, secondGateway.LocalAddr())
+	}
+	if listener.tunnelName != "new-tunnel" || listener.revision != 1 {
+		t.Fatalf("reused port kept old tunnel state: name=%q revision=%d", listener.tunnelName, listener.revision)
+	}
+}
+
 func TestUDPProxyRemoveMappingStopsListening(t *testing.T) {
 	t.Parallel()
 

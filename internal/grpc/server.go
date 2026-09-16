@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	gogrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -41,6 +42,7 @@ type ForwarderServer struct {
 	mu                  sync.RWMutex
 	streams             map[*forwarderStream]struct{}
 	acks                map[string]map[string]int64
+	legacyForwarderSeq  atomic.Uint64
 }
 
 func NewForwarderServer(client client.Client, allocator *portalloc.PortAllocator, forwarderServiceKey client.ObjectKey) *ForwarderServer {
@@ -86,12 +88,9 @@ func (s *ForwarderServer) GetConfig(ctx context.Context, _ *forwarderv1.GetConfi
 }
 
 func (s *ForwarderServer) StreamUpdates(request *forwarderv1.StreamUpdatesRequest, stream forwarderv1.ForwarderConfigService_StreamUpdatesServer) error {
-	id := request.GetForwarderId()
-	if id == "" {
-		return status.Error(codes.InvalidArgument, "forwarder_id is required")
+	forwarder := &forwarderStream{
+		id: s.streamID(request.GetForwarderId()), updates: make(chan *forwarderv1.TunnelUpdate, 64), overflow: make(chan struct{}),
 	}
-
-	forwarder := &forwarderStream{id: id, updates: make(chan *forwarderv1.TunnelUpdate, 64), overflow: make(chan struct{})}
 	s.addStream(forwarder)
 	defer s.removeStream(forwarder)
 
@@ -193,6 +192,19 @@ func (s *ForwarderServer) Start(ctx context.Context, addr string) error {
 		return fmt.Errorf("serving grpc: %w", err)
 	}
 	return nil
+}
+
+func (s *ForwarderServer) streamID(id string) string {
+	if id != "" {
+		return id
+	}
+
+	// Older forwarders cannot acknowledge revisions. Keep their data path alive
+	// during a rolling upgrade, but let this stream block Ready until it has been
+	// replaced by an acknowledgement-capable forwarder.
+	id = fmt.Sprintf("legacy-%d", s.legacyForwarderSeq.Add(1))
+	slog.Warn("legacy forwarder connected without an identity", "forwarderID", id)
+	return id
 }
 
 func (s *ForwarderServer) addStream(stream *forwarderStream) {
