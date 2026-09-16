@@ -148,6 +148,7 @@ var _ = Describe("Tunnel Controller", func() {
 			pod := &corev1.Pod{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, pod)).To(Succeed())
 			Expect(pod.Labels).To(HaveKeyWithValue("tunnels.nais.io/tunnel", resourceName))
+			Expect(pod.Labels).To(HaveKeyWithValue("app.kubernetes.io/component", "tunnel-gateway"))
 			Expect(pod.Spec.Containers[0].ReadinessProbe).NotTo(BeNil())
 			Expect(pod.Spec.Containers[0].ReadinessProbe.HTTPGet.Path).To(Equal("/status"))
 
