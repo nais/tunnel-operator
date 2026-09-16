@@ -15,10 +15,25 @@ const (
 	TunnelPhaseTerminated   TunnelPhase = "Terminated"
 )
 
+type TunnelTargetPodSelector struct {
+	MatchLabels      map[string]string                 `json:"matchLabels,omitempty"`
+	MatchExpressions []metav1.LabelSelectorRequirement `json:"matchExpressions,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="(has(self.resolvedIP) && size(self.resolvedIP) > 0) != has(self.podSelector)",message="exactly one of resolvedIP or podSelector must be set"
+// +kubebuilder:validation:XValidation:rule="!has(self.podSelector) || (has(self.podSelector.matchLabels) && size(self.podSelector.matchLabels) > 0) || (has(self.podSelector.matchExpressions) && size(self.podSelector.matchExpressions) > 0)",message="podSelector must not be empty"
 type TunnelTarget struct {
-	Host       string `json:"host"`
-	Port       int32  `json:"port"`
-	ResolvedIP string `json:"resolvedIP"`
+	Host string `json:"host"`
+	Port int32  `json:"port"`
+
+	// ResolvedIP is the external target address. It is mutually exclusive with PodSelector.
+	// +optional
+	ResolvedIP string `json:"resolvedIP,omitempty"`
+
+	// PodSelector identifies permitted in-cluster target Pods in the Tunnel namespace.
+	// It is mutually exclusive with ResolvedIP.
+	// +optional
+	PodSelector *TunnelTargetPodSelector `json:"podSelector,omitempty"`
 }
 
 type TunnelSpec struct {

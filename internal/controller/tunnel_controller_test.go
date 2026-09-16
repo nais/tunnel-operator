@@ -318,6 +318,96 @@ var _ = Describe("Tunnel Controller", func() {
 			Expect(*udpRule.Ports[0].Protocol).To(Equal(corev1.ProtocolUDP))
 		})
 
+		It("should use a pod selector for in-cluster target egress", func() {
+			tunnel := &v1alpha1.Tunnel{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, tunnel)).To(Succeed())
+			tunnel.Spec.Target.ResolvedIP = ""
+			tunnel.Spec.Target.PodSelector = &v1alpha1.TunnelTargetPodSelector{MatchLabels: map[string]string{
+				"cnpg.io/cluster":      "pg-test",
+				"cnpg.io/instanceRole": "primary",
+			}}
+			Expect(k8sClient.Update(ctx, tunnel)).To(Succeed())
+
+			controllerReconciler := newReconciler()
+			_, err := controllerReconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+			_, err = controllerReconciler.Reconcile(ctx, newRequest())
+			Expect(err).NotTo(HaveOccurred())
+
+			pod := &corev1.Pod{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, pod)).To(Succeed())
+			envByName := map[string]string{}
+			for _, env := range pod.Spec.Containers[0].Env {
+				envByName[env.Name] = env.Value
+			}
+			Expect(envByName).To(HaveKeyWithValue("TUNNEL_TARGET_HOST", "redis.example.internal"))
+			Expect(envByName).NotTo(HaveKey("TUNNEL_TARGET_IP"))
+
+			networkPolicy := &networkingv1.NetworkPolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: gatewayResourceName(resourceName), Namespace: namespace}, networkPolicy)).To(Succeed())
+			tcpRule := networkPolicy.Spec.Egress[0]
+			Expect(tcpRule.To).To(HaveLen(1))
+			Expect(tcpRule.To[0].IPBlock).To(BeNil())
+			Expect(tcpRule.To[0].PodSelector).NotTo(BeNil())
+			Expect(tcpRule.To[0].PodSelector.MatchLabels).To(Equal(map[string]string{
+				"cnpg.io/cluster":      "pg-test",
+				"cnpg.io/instanceRole": "primary",
+			}))
+		})
+
+		It("should reject invalid targets at the API boundary", func() {
+			validSelector := &v1alpha1.TunnelTargetPodSelector{MatchLabels: map[string]string{"app": "postgres"}}
+			tests := []struct {
+				name         string
+				resourceName string
+				target       v1alpha1.TunnelTarget
+			}{
+				{name: "no target variant", resourceName: "invalid-target-none", target: v1alpha1.TunnelTarget{Host: "postgres", Port: 5432}},
+				{name: "empty resolved IP", resourceName: "invalid-target-empty-ip", target: v1alpha1.TunnelTarget{Host: "postgres", Port: 5432, ResolvedIP: ""}},
+				{
+					name: "both target variants", resourceName: "invalid-target-both",
+					target: v1alpha1.TunnelTarget{Host: "postgres", Port: 5432, ResolvedIP: "10.0.0.10", PodSelector: validSelector},
+				},
+				{
+					name: "empty pod selector", resourceName: "invalid-target-empty-selector",
+					target: v1alpha1.TunnelTarget{Host: "postgres", Port: 5432, PodSelector: &v1alpha1.TunnelTargetPodSelector{}},
+				},
+			}
+
+			for _, tt := range tests {
+				By(tt.name)
+				tunnel := &v1alpha1.Tunnel{
+					ObjectMeta: metav1.ObjectMeta{Name: tt.resourceName, Namespace: namespace},
+					Spec: v1alpha1.TunnelSpec{
+						TeamSlug:        "team-a",
+						Environment:     "dev",
+						ClientPublicKey: "client-public-key",
+						Target:          tt.target,
+					},
+				}
+				Expect(k8sClient.Create(ctx, tunnel)).To(HaveOccurred())
+			}
+		})
+
+		It("should reject targets without exactly one non-empty target variant", func() {
+			validSelector := &v1alpha1.TunnelTargetPodSelector{MatchLabels: map[string]string{"app": "postgres"}}
+			tests := []struct {
+				name   string
+				target v1alpha1.TunnelTarget
+			}{
+				{name: "no target variant", target: v1alpha1.TunnelTarget{}},
+				{name: "both target variants", target: v1alpha1.TunnelTarget{ResolvedIP: "10.0.0.10", PodSelector: validSelector}},
+				{name: "empty pod selector", target: v1alpha1.TunnelTarget{PodSelector: &v1alpha1.TunnelTargetPodSelector{}}},
+			}
+
+			for _, tt := range tests {
+				By(tt.name)
+				Expect(validateTunnelTarget(tt.target)).To(HaveOccurred())
+			}
+			Expect(validateTunnelTarget(v1alpha1.TunnelTarget{ResolvedIP: "10.0.0.10"})).To(Succeed())
+			Expect(validateTunnelTarget(v1alpha1.TunnelTarget{PodSelector: validSelector})).To(Succeed())
+		})
+
 		It("should update gateway identity and mapping revision when the gateway pod is replaced", func() {
 			reconciler := newReconciler()
 			_, err := reconciler.Reconcile(ctx, newRequest())

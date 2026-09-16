@@ -40,7 +40,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 	peerPublicKeyStr := requireEnv("TUNNEL_PEER_PUBLIC_KEY")
 	targetHost := requireEnv("TUNNEL_TARGET_HOST")
-	targetIP := requireEnv("TUNNEL_TARGET_IP")
+	targetIP := strings.TrimSpace(os.Getenv("TUNNEL_TARGET_IP"))
 	targetPortStr := requireEnv("TUNNEL_TARGET_PORT")
 	tunnelName := requireEnv("TUNNEL_NAME")
 	tunnelNamespace := requireEnv("TUNNEL_NAMESPACE")
@@ -111,7 +111,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	}
 	defer dev.Close()
 
-	targetAddr := targetAddress(targetIP, targetPort)
+	targetAddr := targetAddress(targetHost, targetIP, targetPort)
 	listenAddr := &net.TCPAddr{IP: net.ParseIP("10.0.0.2"), Port: targetPort}
 	logger.Info("starting TCP proxy", "listen", listenAddr.String(), "target", targetAddr)
 
@@ -174,8 +174,11 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	return nil
 }
 
-func targetAddress(ip string, port int) string {
-	return net.JoinHostPort(ip, strconv.Itoa(port))
+func targetAddress(host, ip string, port int) string {
+	if ip != "" {
+		return net.JoinHostPort(ip, strconv.Itoa(port))
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 func serveTCPProxy(

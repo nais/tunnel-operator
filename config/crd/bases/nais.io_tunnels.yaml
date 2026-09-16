@@ -55,16 +55,64 @@ spec:
                 properties:
                   host:
                     type: string
+                  podSelector:
+                    description: |-
+                      PodSelector identifies permitted in-cluster target Pods in the Tunnel namespace.
+                      It is mutually exclusive with ResolvedIP.
+                    properties:
+                      matchExpressions:
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        type: object
+                    type: object
                   port:
                     format: int32
                     type: integer
                   resolvedIP:
+                    description: ResolvedIP is the external target address. It is
+                      mutually exclusive with PodSelector.
                     type: string
                 required:
                 - host
                 - port
-                - resolvedIP
                 type: object
+                x-kubernetes-validations:
+                - message: exactly one of resolvedIP or podSelector must be set
+                  rule: (has(self.resolvedIP) && size(self.resolvedIP) > 0) != has(self.podSelector)
+                - message: podSelector must not be empty
+                  rule: '!has(self.podSelector) || (has(self.podSelector.matchLabels)
+                    && size(self.podSelector.matchLabels) > 0) || (has(self.podSelector.matchExpressions)
+                    && size(self.podSelector.matchExpressions) > 0)'
               teamSlug:
                 type: string
             required:

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	v1alpha1 "github.com/nais/tunnel-operator/api/v1alpha1"
@@ -83,6 +84,10 @@ func (r *TunnelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
+	}
+
+	if err := validateTunnelTarget(tunnel.Spec.Target); err != nil {
+		return ctrl.Result{}, fmt.Errorf("validating tunnel target: %w", err)
 	}
 
 	if !controllerutil.ContainsFinalizer(tunnel, finalizerName) {
@@ -234,15 +239,7 @@ func gatewayPodSpec(tunnel *v1alpha1.Tunnel, image string, deadlineSeconds int64
 					Protocol:      corev1.ProtocolTCP,
 				},
 			},
-			Env: []corev1.EnvVar{
-				{Name: "TUNNEL_PEER_PUBLIC_KEY", Value: tunnel.Spec.ClientPublicKey},
-				{Name: "TUNNEL_TARGET_HOST", Value: tunnel.Spec.Target.Host},
-				{Name: "TUNNEL_TARGET_IP", Value: tunnel.Spec.Target.ResolvedIP},
-				{Name: "TUNNEL_TARGET_PORT", Value: strconv.Itoa(int(tunnel.Spec.Target.Port))},
-				{Name: "TUNNEL_NAME", Value: tunnel.Name},
-				{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
-				{Name: "LOG_LEVEL", Value: os.Getenv("LOG_LEVEL")},
-			},
+			Env: gatewayEnv(tunnel),
 			ReadinessProbe: &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{
 					HTTPGet: &corev1.HTTPGetAction{
@@ -323,15 +320,7 @@ func (r *TunnelReconciler) ensureNetworkPolicy(
 				},
 			},
 			Egress: []networkingv1.NetworkPolicyEgressRule{
-				{
-					To: []networkingv1.NetworkPolicyPeer{{
-						IPBlock: &networkingv1.IPBlock{CIDR: tunnel.Spec.Target.ResolvedIP + "/32"},
-					}},
-					Ports: []networkingv1.NetworkPolicyPort{{
-						Port:     intstrPtr(tunnel.Spec.Target.Port),
-						Protocol: new(corev1.ProtocolTCP),
-					}},
-				},
+				targetEgressRule(tunnel.Spec.Target),
 				{
 					Ports: []networkingv1.NetworkPolicyPort{{
 						Protocol: new(corev1.ProtocolUDP),
@@ -579,6 +568,67 @@ func tunnelKey(tunnel *v1alpha1.Tunnel) string {
 
 func gatewayResourceName(tunnelName string) string {
 	return "tunnel-gateway-" + tunnelName
+}
+
+func gatewayEnv(tunnel *v1alpha1.Tunnel) []corev1.EnvVar {
+	env := []corev1.EnvVar{
+		{Name: "TUNNEL_PEER_PUBLIC_KEY", Value: tunnel.Spec.ClientPublicKey},
+		{Name: "TUNNEL_TARGET_HOST", Value: tunnel.Spec.Target.Host},
+		{Name: "TUNNEL_TARGET_PORT", Value: strconv.Itoa(int(tunnel.Spec.Target.Port))},
+		{Name: "TUNNEL_NAME", Value: tunnel.Name},
+		{Name: "TUNNEL_NAMESPACE", Value: tunnel.Namespace},
+		{Name: "LOG_LEVEL", Value: os.Getenv("LOG_LEVEL")},
+	}
+	if tunnel.Spec.Target.ResolvedIP != "" {
+		env = append(env, corev1.EnvVar{Name: "TUNNEL_TARGET_IP", Value: tunnel.Spec.Target.ResolvedIP})
+	}
+	return env
+}
+
+func targetEgressRule(target v1alpha1.TunnelTarget) networkingv1.NetworkPolicyEgressRule {
+	peer := networkingv1.NetworkPolicyPeer{}
+	if target.PodSelector != nil {
+		peer.PodSelector = networkPolicyPodSelector(target.PodSelector)
+	} else {
+		peer.IPBlock = &networkingv1.IPBlock{CIDR: target.ResolvedIP + "/32"}
+	}
+	return networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{peer},
+		Ports: []networkingv1.NetworkPolicyPort{{
+			Port:     intstrPtr(target.Port),
+			Protocol: new(corev1.ProtocolTCP),
+		}},
+	}
+}
+
+func networkPolicyPodSelector(selector *v1alpha1.TunnelTargetPodSelector) *metav1.LabelSelector {
+	result := &metav1.LabelSelector{}
+	if len(selector.MatchLabels) > 0 {
+		result.MatchLabels = make(map[string]string, len(selector.MatchLabels))
+		for key, value := range selector.MatchLabels {
+			result.MatchLabels[key] = value
+		}
+	}
+	if len(selector.MatchExpressions) > 0 {
+		result.MatchExpressions = make([]metav1.LabelSelectorRequirement, len(selector.MatchExpressions))
+		for i, requirement := range selector.MatchExpressions {
+			result.MatchExpressions[i] = requirement
+			result.MatchExpressions[i].Values = append([]string(nil), requirement.Values...)
+		}
+	}
+	return result
+}
+
+func validateTunnelTarget(target v1alpha1.TunnelTarget) error {
+	hasResolvedIP := strings.TrimSpace(target.ResolvedIP) != ""
+	hasPodSelector := target.PodSelector != nil
+	if hasResolvedIP == hasPodSelector {
+		return fmt.Errorf("exactly one of resolvedIP or podSelector must be set")
+	}
+	if hasPodSelector && len(target.PodSelector.MatchLabels) == 0 && len(target.PodSelector.MatchExpressions) == 0 {
+		return fmt.Errorf("podSelector must not be empty")
+	}
+	return nil
 }
 
 func gatewayLabels(tunnelName string) map[string]string {
