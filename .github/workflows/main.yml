@@ -168,7 +168,6 @@ jobs:
             namespace: test-team
           spec:
             teamSlug: test-team
-            environment: ci
             clientPublicKey: "hwRGgheoULX8J3BkNVTyZTw79iOZol4FUPc3iSxV4Zw="
             target:
               host: test-db.example.com

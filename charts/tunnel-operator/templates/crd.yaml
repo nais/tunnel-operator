@@ -1,6 +1,9 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: tunnels.nais.io
 spec:
   group: nais.io
@@ -11,123 +14,191 @@ spec:
     singular: tunnel
   scope: Namespaced
   versions:
-  - name: v1alpha1
-    served: true
-    storage: true
-    subresources:
-      status: {}
-    additionalPrinterColumns:
-    - name: Phase
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
       type: string
-      jsonPath: .status.phase
-    - name: Age
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
       type: date
-      jsonPath: .metadata.creationTimestamp
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        type: object
         properties:
           apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
             type: string
           kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
             type: string
           metadata:
             type: object
           spec:
-            type: object
-            required:
-            - teamSlug
-            - environment
-            - target
-            - clientPublicKey
             properties:
-              teamSlug:
+              activeDeadlineSeconds:
+                format: int64
+                type: integer
+              clientPublicKey:
                 type: string
-                description: Team that owns this tunnel
-              environment:
-                type: string
-                description: Target environment
               target:
-                type: object
-                description: Destination info
-                required:
-                - host
-                - port
-                - resolvedIP
                 properties:
                   host:
                     type: string
-                    description: Destination FQDN from Valkey credentials
+                  podSelector:
+                    description: |-
+                      PodSelector identifies permitted in-cluster target Pods in the Tunnel namespace.
+                      It is mutually exclusive with ResolvedIP.
+                    properties:
+                      matchExpressions:
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        type: object
+                    type: object
                   port:
-                    type: integer
                     format: int32
-                    description: Destination port (e.g., 6379 for Valkey)
+                    type: integer
                   resolvedIP:
+                    description: ResolvedIP is the external target address. It is
+                      mutually exclusive with PodSelector.
                     type: string
-                    description: Pre-resolved IP address of the target
-              clientPublicKey:
+                required:
+                - host
+                - port
+                type: object
+                x-kubernetes-validations:
+                - message: exactly one of resolvedIP or podSelector must be set
+                  rule: (has(self.resolvedIP) && size(self.resolvedIP) > 0) != has(self.podSelector)
+                - message: podSelector must not be empty
+                  rule: '!has(self.podSelector) || (has(self.podSelector.matchLabels)
+                    && size(self.podSelector.matchLabels) > 0) || (has(self.podSelector.matchExpressions)
+                    && size(self.podSelector.matchExpressions) > 0)'
+              teamSlug:
                 type: string
-                description: WireGuard public key from the CLI
-              activeDeadlineSeconds:
-                type: integer
-                format: int64
-                description: Maximum lifetime of the gateway pod (safety net)
-          status:
+            required:
+            - clientPublicKey
+            - target
+            - teamSlug
             type: object
+          status:
             properties:
-              phase:
-                type: string
-                description: Current lifecycle phase
-                enum:
-                - Pending
-                - Provisioning
-                - Ready
-                - Connected
-                - Failed
-                - Terminated
-              gatewayPublicKey:
-                type: string
-                description: Gateway's WireGuard public key
-              forwarderPort:
-                type: integer
-                format: int32
-                description: Port exposed by the forwarder
-              forwarderEndpoint:
-                type: string
-                description: Forwarder endpoint advertised to clients
-              gatewayPodName:
-                type: string
-                description: Name of the gateway pod
-              gatewayPodUID:
-                type: string
-                description: UID of the current gateway pod instance
-              gatewayPodIP:
-                type: string
-                description: IP address of the current gateway pod
-              mappingRevision:
-                type: integer
-                format: int64
-                description: Monotonic revision of the gateway mapping
-              message:
-                type: string
-                description: Human-readable status message
               conditions:
-                type: array
                 items:
-                  type: object
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
                   properties:
-                    type:
-                      type: string
-                    status:
-                      type: string
-                    observedGeneration:
-                      type: integer
-                      format: int64
                     lastTransitionTime:
-                      type: string
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
                       format: date-time
-                    reason:
                       type: string
                     message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
                       type: string
-                description: Standard Kubernetes conditions
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              forwarderEndpoint:
+                type: string
+              forwarderPort:
+                format: int32
+                type: integer
+              gatewayPodIP:
+                type: string
+              gatewayPodName:
+                type: string
+              gatewayPodUID:
+                type: string
+              gatewayPublicKey:
+                type: string
+              mappingRevision:
+                format: int64
+                type: integer
+              message:
+                type: string
+              phase:
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

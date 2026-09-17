@@ -49,8 +49,6 @@ spec:
                 type: integer
               clientPublicKey:
                 type: string
-              environment:
-                type: string
               target:
                 properties:
                   host:
@@ -117,7 +115,6 @@ spec:
                 type: string
             required:
             - clientPublicKey
-            - environment
             - target
             - teamSlug
             type: object

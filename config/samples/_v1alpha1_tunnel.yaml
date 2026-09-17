@@ -10,7 +10,6 @@ metadata:
   name: tunnel-sample
 spec:
   teamSlug: sample-team
-  environment: dev
   clientPublicKey: sample-public-key
   target:
     host: redis.example.com

@@ -38,7 +38,6 @@ type TunnelTarget struct {
 
 type TunnelSpec struct {
 	TeamSlug              string       `json:"teamSlug"`
-	Environment           string       `json:"environment"`
 	Target                TunnelTarget `json:"target"`
 	ClientPublicKey       string       `json:"clientPublicKey"`
 	ActiveDeadlineSeconds *int64       `json:"activeDeadlineSeconds,omitempty"`

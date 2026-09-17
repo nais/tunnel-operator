@@ -92,7 +92,6 @@ var _ = Describe("Tunnel Controller", func() {
 					},
 					Spec: v1alpha1.TunnelSpec{
 						TeamSlug:        "team-a",
-						Environment:     "dev",
 						ClientPublicKey: "client-public-key",
 						Target: v1alpha1.TunnelTarget{
 							Host:       "redis.example.internal",
@@ -381,7 +380,6 @@ var _ = Describe("Tunnel Controller", func() {
 					ObjectMeta: metav1.ObjectMeta{Name: tt.resourceName, Namespace: namespace},
 					Spec: v1alpha1.TunnelSpec{
 						TeamSlug:        "team-a",
-						Environment:     "dev",
 						ClientPublicKey: "client-public-key",
 						Target:          tt.target,
 					},
