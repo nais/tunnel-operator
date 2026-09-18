@@ -25,6 +25,15 @@ spec:
           port: {{ .Values.forwarderPortRange.min }}
           endPort: {{ .Values.forwarderPortRange.max }}
 {{- end }}
+    # Kubelet probes originate from a node IP. Standard NetworkPolicy has no
+    # node selector, so allow the non-sensitive health endpoint explicitly.
+    # The forwarder LoadBalancer exposes WireGuard UDP ports only.
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 8085
     - from:
         - podSelector:
             matchLabels:
